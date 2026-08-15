@@ -1,0 +1,15 @@
+{
+  "name": "gst-ai-agent",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [],
+  "scripts": {
+    "install:server": "cd server && npm install",
+    "install:client": "cd client && npm install",
+    "dev:server": "cd server && npm run dev",
+    "dev:client": "cd client && npm run dev",
+    "prisma:migrate": "cd server && npx prisma migrate dev --name init",
+    "seed": "cd server && npm run seed",
+    "sample": "cd scripts && node generate_sample_data.mjs"
+  }
+}

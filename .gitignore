@@ -1,0 +1,40 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+*.tsbuildinfo
+
+# Environment / secrets — NEVER commit
+.env
+.env.local
+.env.*.local
+*.env
+
+# Logs
+*.log
+logs/
+
+# Databases (contain private/customer/GST data)
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# Uploaded files and generated reports (GST/customer data) — at any depth
+**/uploads/*
+!uploads/.gitkeep
+!**/uploads/.gitkeep
+**/reports/*
+!reports/.gitkeep
+!**/reports/.gitkeep
+
+# Generated sample-data artifacts (regenerate with `npm run sample`)
+scripts/output/
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea/

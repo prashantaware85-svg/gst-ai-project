@@ -1,0 +1,163 @@
+// PostgreSQL production schema for the GST AI Reconciliation Agent.
+// Kept separate from the SQLite development schema (prisma/schema.prisma) so
+// local dev, E2E and tests stay on SQLite while production deploys to Postgres.
+//
+// Differences vs dev schema, all intentional for production:
+//   * provider = "postgresql"
+//   * Monetary amounts use Decimal(18,2) instead of Float (exact rupees+paise)
+//   * NoGenerated defaults are identical so code behaves the same on both.
+//
+// Migrations live in prisma/prod/migrations and are applied with:
+//   prisma migrate deploy --schema prisma/prod/schema.prisma
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  name      String
+  email     String   @unique
+  password  String
+  role      String   @default("VIEWER") // ADMIN | ACCOUNTANT | VIEWER
+  createdAt DateTime @default(now())
+
+  notifications Notification[]
+}
+
+model Upload {
+  id        Int       @id @default(autoincrement())
+  fileName  String
+  source    String
+  rows      Int
+  filePath  String
+  createdAt DateTime  @default(now())
+
+  invoices Invoice[]
+}
+
+model Invoice {
+  id           Int      @id @default(autoincrement())
+  source       String
+  gstin        String
+  vendorName   String?
+  invoiceNo    String
+  invoiceDate  DateTime
+  taxableValue Decimal  @db.Decimal(18, 2)
+  cgst         Decimal  @default(0) @db.Decimal(18, 2)
+  sgst         Decimal  @default(0) @db.Decimal(18, 2)
+  igst         Decimal  @default(0) @db.Decimal(18, 2)
+  cess         Decimal  @default(0) @db.Decimal(18, 2)
+  totalGst     Decimal  @default(0) @db.Decimal(18, 2)
+  invoiceValue Decimal  @default(0) @db.Decimal(18, 2)
+  noteType     String? // "INVOICE" | "CREDIT_NOTE" | "DEBIT_NOTE"
+  uploadId     Int?
+  createdAt    DateTime @default(now())
+
+  upload Upload? @relation(fields: [uploadId], references: [id], onDelete: SetNull)
+
+  @@index([source, gstin, invoiceNo])
+  @@index([source, gstin])
+  @@index([source, invoiceNo])
+  @@index([invoiceNo])
+  @@index([gstin])
+  @@index([invoiceDate])
+}
+
+model ReconciliationResult {
+  id              Int      @id @default(autoincrement())
+  runId           Int
+  bookInvoiceId   Int
+  twoBInvoiceId   Int?
+  status          String
+  confidence      Int
+  mismatchTypes   String
+  bookInvoiceNo   String
+  bookGstin       String
+  twoBInvoiceNo   String?
+  twoBGstin       String?
+  vendorName      String?
+  bookDate        DateTime?
+  twoBDate        DateTime?
+  invoiceNoDiff   String?
+  dateDiff        String?
+  bookTaxable     Decimal  @db.Decimal(18, 2)
+  twoBTaxable     Decimal? @db.Decimal(18, 2)
+  taxableDiff     Decimal  @default(0) @db.Decimal(18, 2)
+  bookTax         Decimal  @db.Decimal(18, 2)
+  twoBTax         Decimal? @db.Decimal(18, 2)
+  gstDiff         Decimal  @db.Decimal(18, 2)
+  itcEligible     Decimal  @default(0) @db.Decimal(18, 2)
+  itcPending      Decimal  @default(0) @db.Decimal(18, 2)
+  aiWhat          String?
+  aiReason        String?
+  aiAction        String?
+  createdAt       DateTime @default(now())
+
+  @@index([runId])
+  @@index([runId, status])
+  @@index([runId, bookGstin])
+  @@index([runId, twoBGstin])
+  @@index([runId, vendorName])
+  @@index([runId, bookInvoiceNo])
+  @@index([status])
+}
+
+model SalesReconciliationResult {
+  id             Int      @id @default(autoincrement())
+  runId          Int
+  salesInvoiceId Int
+  gstr1InvoiceId Int?
+  status         String
+  confidence     Int
+  mismatchTypes  String
+  bookInvoiceNo  String
+  bookGstin      String
+  gstr1InvoiceNo String?
+  gstr1Gstin     String?
+  customerName   String?
+  bookDate       DateTime?
+  gstr1Date      DateTime?
+  invoiceNoDiff  String?
+  dateDiff       String?
+  bookTaxable    Decimal  @db.Decimal(18, 2)
+  gstr1Taxable   Decimal? @db.Decimal(18, 2)
+  taxableDiff    Decimal  @default(0) @db.Decimal(18, 2)
+  bookTax        Decimal  @db.Decimal(18, 2)
+  gstr1Tax       Decimal? @db.Decimal(18, 2)
+  gstDiff        Decimal  @default(0) @db.Decimal(18, 2)
+  itcEligible    Decimal  @default(0) @db.Decimal(18, 2)
+  itcPending     Decimal  @default(0) @db.Decimal(18, 2)
+  aiWhat         String?
+  aiReason       String?
+  aiAction       String?
+  createdAt      DateTime @default(now())
+
+  @@index([runId])
+  @@index([runId, status])
+  @@index([runId, bookGstin])
+  @@index([runId, gstr1Gstin])
+  @@index([runId, customerName])
+  @@index([runId, bookInvoiceNo])
+  @@index([status])
+}
+
+model Notification {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  type      String
+  title     String
+  message   String
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, read])
+  @@index([userId, createdAt])
+  @@index([type])
+}
