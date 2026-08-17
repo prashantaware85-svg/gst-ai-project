@@ -27,6 +27,7 @@ services:
     startCommand: |
       cd server \
         && npx prisma migrate deploy --schema prisma/prod/schema.prisma \
+        && if [ -n "$ADMIN_EMAIL" ] && [ -n "$ADMIN_PASSWORD" ]; then npm run bootstrap:admin; fi \
         && npm start
     healthCheckPath: /health
     disk:
