@@ -25,11 +25,12 @@ export function isProdEnv(): boolean {
   return isProd;
 }
 
-// Controlled guest login for demo/local environments. Enabled ONLY when
-// GUEST_AUTH=true AND the app is NOT running in production — a Render
-// production deployment can therefore never open an unauthenticated guest.
-// The guest is a real, read-only VIEWER user (no write endpoints). Reads the
-// live environment on every call; anything else means guest access is off.
+// Controlled guest login (demo or production). Enabled ONLY when the operator
+// explicitly sets GUEST_AUTH=true. The guest is always a real, read-only
+// VIEWER user, so even a production deployment stays read-only: upload /
+// reconcile / user-creation remain ADMIN/ACCOUNTANT-only and the guest gets
+// 403 on every write endpoint. Reads the live environment on every call;
+// anything else means guest access is off.
 export function guestAuthEnabled(): boolean {
-  return process.env.GUEST_AUTH === "true" && process.env.NODE_ENV !== "production";
+  return process.env.GUEST_AUTH === "true";
 }

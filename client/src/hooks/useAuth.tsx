@@ -24,7 +24,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // and the login screen is skipped. Otherwise normal login is preserved.
       let guestAvailable = false;
       try {
-        const r = await fetch("/api/health");
+        const r = await fetch("/health");
         const h = await r.json();
         guestAvailable = Boolean(h?.guestAuth);
       } catch {
