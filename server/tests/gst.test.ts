@@ -45,6 +45,12 @@ test("computeItc DUPLICATE: only the first occurrence owns ITC", () => {
   assert.deepEqual(computeItc("DUPLICATE", 5400, 5400, false), { itcEligible: 0, itcPending: 0 });
 });
 
+test("computeItc DUPLICATE with no 2B amount defers instead of claiming", () => {
+  // A books duplicate the supplier never filed in GSTR-1 must not yield ITC.
+  assert.deepEqual(computeItc("DUPLICATE", 5400, null, true), { itcEligible: 0, itcPending: 5400 });
+  assert.deepEqual(computeItc("DUPLICATE", 5400, null, false), { itcEligible: 0, itcPending: 0 });
+});
+
 test("computeItc MISSING_IN_BOOKS is not a books-side claim", () => {
   const itc = computeItc("MISSING_IN_BOOKS", 0, 21600);
   assert.deepEqual(itc, { itcEligible: 0, itcPending: 0 });

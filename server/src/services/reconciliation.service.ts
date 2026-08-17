@@ -16,7 +16,7 @@
 //   - Invoices that appear in 2B but with GST/date difference => ITC eligible on 2B amount only (pending the books-side difference)
 //   - Invoices missing in 2B                             => ITC pending (full books tax deferred)
 //   - Invoices missing in books (vendor filed but not purchased) => ITC not relevant for us (0 eligible, 0 pending)
-//   - Duplicate                                          => ITC eligible once, on the first occurrence only; duplicate rows carry 0
+//   - Duplicate                                          => ITC eligible once, on the first occurrence only and only when 2B confirms it; duplicate rows carry 0, and a duplicate with no 2B counterpart defers the full tax
 
 import { prisma } from "../utils/prisma";
 import { fuzzySame, normalizeInvoiceNo, levenshtein, invoiceKey, duplicateGroupInfo } from "../utils/fuzzy";

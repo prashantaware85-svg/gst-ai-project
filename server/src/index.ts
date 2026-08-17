@@ -1,6 +1,8 @@
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
+import fs from "node:fs";
+import path from "node:path";
 import { authRouter } from "./routes/auth.routes";
 import { uploadRouter } from "./routes/upload.routes";
 import { reconcileRouter } from "./routes/reconcile.routes";
@@ -41,7 +43,40 @@ app.use("/api", notificationsRouter);
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
+// Static frontend (single-service Render deployment). Serves the built
+// client whenever it exists, with an SPA fallback to index.html. API + /health
+// are registered above, so they always win over the catch-all.
+function staticDirCandidates(): string[] {
+  return [
+    process.env.STATIC_DIR,
+    path.resolve(__dirname, "../../../client/dist"), // compiled: server/dist/src
+    path.resolve(process.cwd(), "client/dist"),       // started from repo root
+    path.resolve(process.cwd(), "../client/dist"),    // started from server/
+  ].filter((p): p is string => Boolean(p));
+}
+
+const staticDir = staticDirCandidates().find((dir) => fs.existsSync(path.join(dir, "index.html")));
+if (staticDir) {
+  app.use(express.static(staticDir));
+  app.get("*", (req, res, next) => {
+    if (req.path.startsWith("/api") || req.path === "/health") return next();
+    res.sendFile(path.join(staticDir, "index.html"));
+  });
+  logger.info(`Serving static client from ${staticDir}`);
+}
+
 app.use(errorHandler);
 
 const PORT = Number(process.env.PORT || 4000);
-app.listen(PORT, () => logger.info(`GST AI Agent server on http://localhost:${PORT}`));
+const HOST = process.env.HOST || "0.0.0.0";
+const server = app.listen(PORT, HOST, () =>
+  logger.info(`GST AI Agent server on http://${HOST}:${PORT}`),
+);
+
+server.on("error", (err: NodeJS.ErrnoException) => {
+  if (err.code === "EADDRINUSE") {
+    logger.error(`Port ${PORT} already in use`);
+    process.exit(1);
+  }
+  throw err;
+});

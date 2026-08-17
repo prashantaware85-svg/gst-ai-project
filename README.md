@@ -149,7 +149,7 @@ cd server && npm run build        # -> server/dist
 cd client && npm run build        # -> client/dist
 ```
 
-36 tests cover GST math, GSTIN validation, fuzzy invoice matching, file parsers, purchase/sales reconciliation (matched, wrong-GSTIN/tax/date, missing in 2B/books, duplicates, credit/debit notes, ITC ownership) and report/CSV/DECIMAL handling.
+38 tests cover GST math, GSTIN validation, fuzzy invoice matching, file parsers, purchase/sales reconciliation (matched, wrong-GSTIN/tax/date, missing in 2B/books, duplicates with correct 2B-aware ITC ownership, credit/debit notes) and report/CSV/DECIMAL handling.
 
 ---
 
@@ -167,6 +167,27 @@ cd client && npm run build        # -> client/dist
 5. **Serve** — Run `npm start` in `server/` (serves API on `PORT`); serve `client/dist` behind any static host (reverse-proxy `/api` to the backend, or set `VITE_API_URL`).
 6. **Storage** — Ensure `UPLOAD_DIR` and `REPORT_DIR` exist and are writable; keep them out of the repo.
 7. **Security** — JWT auth, bcrypt password hashing, role-based access (Admin/Accountant/Viewer), CORS allow-list, per-route rate limiting, 20 MB upload limit with extension whitelist, and safe production error messages. No `.env` or generated files are ever committed.
+
+---
+
+## ☁️ Deploying to Render (single service)
+
+A ready-to-use [`render.yaml`](render.yaml) Blueprint is included. It deploys ONE Web Service that serves both the Express API (`/api`, `/health`) **and** the built React client as static files (Express auto-detects `client/dist`).
+
+1. **Push to GitHub**, then in Render: **New → Blueprint** and select this repo. Render provisions the service plus a 1 GB disk mounted at `/data` for `UPLOAD_DIR` / `REPORT_DIR`.
+2. **Add secrets** (Render Dashboard → Environment) — never in `render.yaml`:
+   - `DATABASE_URL` — your **PostgreSQL** URL, e.g. `postgresql://USER:PASSWORD@HOST:5432/gst_agent?connection_limit=10`
+   - `JWT_SECRET` — ≥16 chars, generated value
+   - `OPENAI_API_KEY` — optional (empty = offline deterministic mode)
+   - `CORS_ORIGIN` — `https://<your-app>.onrender.com` (optional when same-origin)
+3. **Migrations run automatically at boot** via `prisma migrate deploy --schema prisma/prod/schema.prisma`.
+4. **Health check** — `GET /health` is pinged automatically by Render.
+5. **First admin** — after deploy, create an admin (Render Shell, or locally against prod `DATABASE_URL`):
+   ```bash
+   cd server
+   ADMIN_EMAIL=admin@company.com ADMIN_PASSWORD='<strong>' npm run bootstrap:admin
+   ```
+6. **Alternative (split services)** — serve `client/dist` as a static site (set `VITE_API_URL` at client build time) and point it at the API service.
 
 ---
 

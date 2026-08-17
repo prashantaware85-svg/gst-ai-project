@@ -1,0 +1,68 @@
+# Render Blueprint for the GST AI Agent.
+#
+# Single Web Service deployment:
+#   * Express API under /api and /health
+#   * Built React client served as static files by the same service
+#   * PostgreSQL production schema (server/prisma/prod) applied at boot
+#
+# SECRETS ARE NOT DEFINED HERE. Set these in the Render Dashboard
+# (Environment tab) after creation: DATABASE_URL, JWT_SECRET,
+# OPENAI_API_KEY, CORS_ORIGIN. Everything else has a safe default below.
+#
+services:
+  - type: web
+    name: gst-ai-agent
+    runtime: node
+    plan: free
+    autoDeploy: true
+    # Build order: server deps + Postgres client + server build,
+    # then client deps + client build. --include=dev keeps the Prisma
+    # CLI available so the start command can run migrations.
+    buildCommand: |
+      cd server && npm ci --include=dev \
+        && npx prisma generate --schema prisma/prod/schema.prisma \
+        && npm run build \
+        && cd ../client && npm ci --include=dev && npm run build
+    # Migrate against the production schema, then boot the API + static app.
+    startCommand: |
+      cd server \
+        && npx prisma migrate deploy --schema prisma/prod/schema.prisma \
+        && npm start
+    healthCheckPath: /health
+    disk:
+      name: gst-ai-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        # Paste your PostgreSQL connection string here (Render Postgres or
+        # external). Example:
+        #   postgresql://USER:PASSWORD@HOST:5432/gst_agent?connection_limit=10
+        sync: false
+      - key: JWT_SECRET
+        # Generate: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+        sync: false
+      - key: CORS_ORIGIN
+        # Comma-separated browser origins allowed to call the API, e.g.
+        #   https://gst-ai-agent.onrender.com
+        # Leave unset for same-origin (frontend served by this same service).
+        sync: false
+      - key: OPENAI_API_KEY
+        # Optional. Empty = offline deterministic rule-based mode.
+        sync: false
+      - key: AI_CONCURRENCY
+        value: "5"
+      - key: UPLOAD_DIR
+        value: /data/uploads
+      - key: REPORT_DIR
+        value: /data/reports
+      - key: GST_DIFF_THRESHOLD
+        value: "50"
+      - key: MATCH_TOLERANCE_RUPEES
+        value: "1"
+      - key: MATCH_TOLERANCE_PERCENT
+        value: "0.5"
+      - key: MATCH_DATE_TOLERANCE_DAYS
+        value: "1"

@@ -6,8 +6,8 @@ import { Card } from "../components/ui";
 export default function Login() {
   const { login } = useAuth();
   const nav = useNavigate();
-  const [email, setEmail] = useState("admin@gst.ai");
-  const [password, setPassword] = useState("admin123");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [err, setErr] = useState("");
 
   const submit = async (e: FormEvent) => {
@@ -27,7 +27,9 @@ export default function Login() {
             type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
           {err && <div className="text-red-500 text-sm">{err}</div>}
           <button className="w-full bg-brand-600 text-white rounded py-2">Login</button>
-          <div className="text-xs text-gray-500">admin@gst.ai / admin123</div>
+          {import.meta.env.DEV && (
+            <div className="text-xs text-gray-500">Dev demo: admin@gst.ai / admin123</div>
+          )}
         </form>
       </Card>
     </div>

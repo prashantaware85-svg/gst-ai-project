@@ -50,7 +50,9 @@ export function dateToleranceDays(): number {
 //   MATCHED           => full books tax is eligible
 //   MISMATCHED (match)=> eligible on the lesser of books/2B tax; the rest pending
 //   MISSING_IN_2B     => nothing eligible, full books tax pending
-//   DUPLICATE         => eligible when the row owns the ITC (first occurrence)
+//   DUPLICATE         => eligible only when the row owns the ITC (first
+//                        occurrence) AND 2B confirms the invoice; a duplicate
+//                        with no 2B counterpart defers the full tax
 //   MISSING_IN_BOOKS  => not our purchase (0/0)
 // The `ownsItc` flag resolves duplicates; callers pass whether this row is the
 // first occurrence of its duplicate group.
@@ -90,9 +92,21 @@ export function computeItc(
         ? { itcEligible: 0, itcPending: 0 }
         : { itcEligible: 0, itcPending: round3(mag) };
     case "DUPLICATE":
-      return ownsItc
-        ? { itcEligible: round3(mag) * sign, itcPending: 0 }
-        : { itcEligible: 0, itcPending: 0 };
+      // A duplicate can only claim ITC when GSTR-2B confirms the invoice. A
+      // books duplicate with no 2B counterpart must defer the full tax instead
+      // of claiming it — claiming ITC on an invoice the supplier never filed
+      // would be a compliance violation (Section 16 conditions).
+      if (!ownsItc) return { itcEligible: 0, itcPending: 0 };
+      if (twoBTax == null) {
+        return noteType === "CREDIT_NOTE"
+          ? { itcEligible: 0, itcPending: 0 }
+          : { itcEligible: 0, itcPending: round3(mag) };
+      }
+      {
+        const eligible = Math.min(mag, Math.abs(round3(twoBTax)));
+        const pending = Math.max(0, mag - eligible);
+        return { itcEligible: round3(eligible) * sign, itcPending: round3(pending) };
+      }
     default:
       // MISSING_IN_BOOKS and any unclassified rows: not a books-side claim.
       return { itcEligible: 0, itcPending: 0 };

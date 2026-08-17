@@ -64,7 +64,7 @@ test("purchase reconciliation flags MISSING_IN_BOOKS for 2B-only rows", async ()
   assert.equal(r.itcPending, 0);
 });
 
-test("purchase duplicate detection: first occurrence only owns ITC", async () => {
+test("purchase duplicate without 2B defers ITC instead of claiming", async () => {
   const purchase = [
     inv({ id: 1, gstin: "27AAAAA0000A1Z5", invoiceNo: "GLBX-101", igst: 5400 }),
     inv({ id: 2, gstin: "27AAAAA0000A1Z5", invoiceNo: "GLBX-101", igst: 5400 }),
@@ -74,8 +74,28 @@ test("purchase duplicate detection: first occurrence only owns ITC", async () =>
   const second = rows.find((x) => x.bookInvoiceId === 2)!;
   assert.equal(first.status, "DUPLICATE");
   assert.equal(second.status, "DUPLICATE");
-  assert.equal(first.itcEligible, 5400); // first owns it
-  assert.equal(second.itcEligible, 0);   // duplicate carries zero
+  // No GSTR-2B counterpart: the first occurrence must NOT claim ITC.
+  assert.equal(first.itcEligible, 0);
+  assert.equal(first.itcPending, 5400);
+  assert.equal(second.itcEligible, 0);
+  assert.equal(second.itcPending, 0);
+});
+
+test("purchase duplicate with 2B match: first occurrence claims ITC once", async () => {
+  const purchase = [
+    inv({ id: 1, gstin: "27AAAAA0000A1Z5", invoiceNo: "GLBX-101", igst: 5400 }),
+    inv({ id: 2, gstin: "27AAAAA0000A1Z5", invoiceNo: "GLBX-101", igst: 5400 }),
+  ];
+  const twoB = [inv({ id: 10, gstin: "27AAAAA0000A1Z5", invoiceNo: "GLBX-101", igst: 5400 })];
+  const rows = await reconcilePurchases(purchase, twoB, 1);
+  const first = rows.find((x) => x.bookInvoiceId === 1)!;
+  const second = rows.find((x) => x.bookInvoiceId === 2)!;
+  assert.equal(first.status, "DUPLICATE");
+  assert.equal(second.status, "DUPLICATE");
+  assert.equal(first.itcEligible, 5400);
+  assert.equal(first.itcPending, 0);
+  assert.equal(second.itcEligible, 0);
+  assert.equal(second.itcPending, 0);
 });
 
 test("sales reconciliation classifies MATCHED and MISSING_IN_GSTR1", async () => {

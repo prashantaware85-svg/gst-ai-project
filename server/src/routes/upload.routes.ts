@@ -59,9 +59,12 @@ async function handleUpload(req: AuthedRequest, res: any, source: string) {
     });
   }
 
-  const upload = await prisma.upload.create({ data: { fileName: req.file.originalname, source, rows: 0, filePath: req.file.path } });
+  // Uploaded files contain customer/GST data. The file is parsed and then
+  // removed from disk immediately so sensitive data does not accumulate in
+  // UPLOAD_DIR; the Upload row keeps the original name + timestamp as metadata.
   try {
     const buf = fs.readFileSync(req.file.path);
+    const upload = await prisma.upload.create({ data: { fileName: req.file.originalname, source, rows: 0, filePath: req.file.path } });
     let rows: any[] = [];
     switch (source) {
       case "PURCHASE":
@@ -85,7 +88,13 @@ async function handleUpload(req: AuthedRequest, res: any, source: string) {
     // A file the client supplied that cannot be parsed is a client error, not a
     // server fault, so it must surface as 400 rather than 500.
     return res.status(400).json({ error: "ParseError", message: e.message ?? "Failed to parse file" });
+  } finally {
+    safeUnlink(req.file.path);
   }
+}
+
+function safeUnlink(p: string) {
+  try { fs.unlinkSync(p); } catch { /* best-effort cleanup */ }
 }
 
 uploadRouter.post("/upload/purchase", uploadLimiter, authenticate, authorize("ADMIN", "ACCOUNTANT"), uploader.single("file"), (req, res) => handleUpload(req as any, res, "PURCHASE"));
