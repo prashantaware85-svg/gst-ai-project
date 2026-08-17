@@ -29,6 +29,7 @@ http.interceptors.response.use(
 export const api = {
   login: (email: string, password: string) =>
     http.post("/auth/login", { email, password }).then((r) => r.data),
+  guestLogin: () => http.post("/auth/guest").then((r) => r.data),
   me: () => http.get("/auth/me").then((r) => r.data),
   dashboard: () => http.get("/dashboard").then((r) => r.data),
   vendors: () => http.get("/vendors").then((r) => r.data),

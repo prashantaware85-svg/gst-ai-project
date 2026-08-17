@@ -24,3 +24,12 @@ export function corsOrigins(): string[] {
 export function isProdEnv(): boolean {
   return isProd;
 }
+
+// Controlled guest login for demo/local environments. Enabled ONLY when
+// GUEST_AUTH=true AND the app is NOT running in production — a Render
+// production deployment can therefore never open an unauthenticated guest.
+// The guest is a real, read-only VIEWER user (no write endpoints). Reads the
+// live environment on every call; anything else means guest access is off.
+export function guestAuthEnabled(): boolean {
+  return process.env.GUEST_AUTH === "true" && process.env.NODE_ENV !== "production";
+}

@@ -15,7 +15,7 @@ import { notificationsRouter } from "./routes/notifications.routes";
 import { errorHandler } from "./middleware/error.middleware";
 import { logger } from "./utils/logger";
 import { ensureDirs } from "./utils/fs";
-import { corsOrigins } from "./utils/config";
+import { corsOrigins, guestAuthEnabled } from "./utils/config";
 
 const app = express();
 
@@ -41,7 +41,7 @@ app.use("/api", searchRouter);
 app.use("/api", chatRouter);
 app.use("/api", notificationsRouter);
 
-app.get("/health", (_req, res) => res.json({ ok: true }));
+app.get("/health", (_req, res) => res.json({ ok: true, guestAuth: guestAuthEnabled() }));
 
 // Static frontend (single-service Render deployment). Serves the built
 // client whenever it exists, with an SPA fallback to index.html. API + /health

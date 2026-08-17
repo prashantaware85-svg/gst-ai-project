@@ -1,9 +1,11 @@
 import { Router } from "express";
 import bcrypt from "bcryptjs";
+import crypto from "node:crypto";
 import { prisma } from "../utils/prisma";
 import { signToken, authenticate, authorize, AuthedRequest } from "../middleware/auth.middleware";
 import { rateLimit } from "../middleware/rate-limit.middleware";
 import { z } from "zod";
+import { guestAuthEnabled } from "../utils/config";
 
 export const authRouter = Router();
 
@@ -33,6 +35,31 @@ authRouter.post("/auth/login", loginLimiter, async (req, res) => {
 
 authRouter.get("/auth/me", authenticate, (req: AuthedRequest, res) => {
   return res.json({ user: req.user });
+});
+
+// Controlled guest login for demo/local environments (frontend auto-logs-in so
+// the login screen is skipped). Only reachable when GUEST_AUTH=true and NOT in
+// production; the guest is forced to the read-only VIEWER role, so write APIs
+// (upload / reconcile / user creation) stay protected by authorize().
+authRouter.post("/auth/guest", userCreateLimiter, async (_req, res) => {
+  if (!guestAuthEnabled()) {
+    return res.status(403).json({ error: "Forbidden", message: "Guest access is disabled" });
+  }
+  const email = "guest@demo.local";
+  let u = await prisma.user.findUnique({ where: { email } });
+  if (!u) {
+    u = await prisma.user.create({
+      data: {
+        name: "Guest",
+        email,
+        password: await bcrypt.hash(crypto.randomBytes(24).toString("hex"), 10),
+        role: "VIEWER",
+      },
+    });
+  } else if (u.role !== "VIEWER") {
+    u = await prisma.user.update({ where: { id: u.id }, data: { role: "VIEWER" } });
+  }
+  return res.json(await issueTokenFor(u.id));
 });
 
 const signupSchema = z.object({

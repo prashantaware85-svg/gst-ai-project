@@ -126,6 +126,9 @@ Login with **demo users** (dev only — change passwords in seed):
 | `UPLOAD_DIR` / `REPORT_DIR` | no | File storage paths (default `./uploads` / `./reports`) |
 | `GST_DIFF_THRESHOLD` | no | Rupee threshold for high-GST-diff notifications (default `50`) |
 | `MATCH_TOLERANCE_*` | no | Matching tolerance: `RUPEES` (1), `PERCENT` (0.5), `DATE_TOLERANCE_DAYS` (1) |
+| `GUEST_AUTH` | no | `true` → **read-only guest login** (frontend auto-login, skips the login screen) in non-production (default `false`) |
+
+> ⚠️ **GUEST_AUTH SECURITY WARNING** — `GUEST_AUTH=true` lets anyone open the app without a password and browse GST data as a read-only **VIEWER** (dashboards, invoices, reports, vendors, notifications). It is **hard-blocked in production**: with `NODE_ENV=production` the guest endpoint returns `403`, so a Render production deployment can never be opened without a real login. The guest role can never call write endpoints — upload / reconcile / user-creation stay ADMIN/ACCOUNTANT-only. Use it only on throwaway demo data.
 
 ### Client (`client/.env` — copy from `client/.env.example`)
 | Variable | Required | Description |
