@@ -37,7 +37,36 @@ export function guestAuthEnabled(): boolean {
 
 // Local TallyPrime connector. TallyPrime listens on localhost:9000 by default
 // (XML-over-HTTP). Cloud servers cannot reach a localhost TallyPrime, so this
-// is intended for local development where TallyPrime runs on the same machine.
+// is intended for local development where TallyPrime runs on the same machine
+// (direct mode) and for the Windows Tally Bridge agent (which imports the same
+// service and talks to localhost:9000 on the user's PC).
 export function tallyUrl(): string {
   return process.env.TALLY_URL || "http://localhost:9000";
+}
+
+export type TallyMode = "direct" | "bridge";
+
+// How the backend reaches TallyPrime:
+//   direct  - POST XML to TALLY_URL (localhost:9000). Works only when the
+//             Express server runs on the same machine as TallyPrime (local dev
+//             and the test suite).
+//   bridge  - route /api/tally/* through the outbound WebSocket connection of
+//             the Windows Tally Bridge agent. Required for cloud deployments
+//             (Render), whose localhost is never the user's PC.
+// Anything other than TALLY_MODE=bridge means direct, so dev/tests are
+// untouched and existing behaviour is preserved.
+export function tallyMode(): TallyMode {
+  return process.env.TALLY_MODE === "bridge" ? "bridge" : "direct";
+}
+
+// Secret shared with the Windows Tally Bridge agent. The agent authenticates
+// its outbound WebSocket connection to the Render server with this token. Read
+// server-side only — it must never reach the frontend or be logged.
+export function tallyBridgeToken(): string {
+  const t = process.env.TALLY_BRIDGE_TOKEN || "";
+  if (t.trim()) return t.trim();
+  if (isProd && tallyMode() === "bridge") {
+    throw new Error("TALLY_BRIDGE_TOKEN is required in production when TALLY_MODE=bridge");
+  }
+  return "";
 }

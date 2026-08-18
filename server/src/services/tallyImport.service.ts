@@ -6,7 +6,7 @@ import {
   fetchVouchers,
   type NormalizedVoucher,
   type VoucherKind,
-} from "./tally.service";
+} from "./tallyTransport.service";
 
 // Persists TallyPrime vouchers into the application database (read-only; Tally
 // itself is never written to). Duplicate prevention is two-layered: a code-level

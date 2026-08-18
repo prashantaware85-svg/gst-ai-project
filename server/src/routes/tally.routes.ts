@@ -1,13 +1,17 @@
 import { Router } from "express";
 import type { Request, Response } from "express";
 import { authenticate, authorize } from "../middleware/auth.middleware";
-import { tallyUrl } from "../utils/config";
 import {
   TallyError,
-  fetchCurrentCompany,
-  fetchVouchers,
   type VoucherKind,
 } from "../services/tally.service";
+import {
+  fetchCurrentCompany,
+  fetchVouchers,
+  pingTally,
+  transportBridgeConnected,
+  transportMode,
+} from "../services/tallyTransport.service";
 import {
   getImportSummary,
   importVouchers,
@@ -16,32 +20,35 @@ import {
 
 export const tallyRouter = Router();
 
-// Local TallyPrime connector. TallyPrime accepts XML-over-HTTP POST requests
-// at http://localhost:9000. This endpoint only pings TallyPrime to test
-// connectivity — it does NOT read or write any GST/invoice data yet. Because a
-// cloud server (e.g. Render) cannot reach a localhost TallyPrime, this route is
-// intended for local development where TallyPrime runs on the same machine.
-const CHECK_TIMEOUT_MS = 3000;
+// TallyPrime connector. TallyPrime accepts XML-over-HTTP POST requests at
+// http://localhost:9000 on the user's PC. How the backend reaches that machine
+// is chosen by tallyTransport.service:
+//   direct  - same machine (local dev / the test suite),
+//   bridge  - through the outbound WebSocket of the Windows Tally Bridge agent
+//             (production / Render). Render never touches its own localhost.
+// The `mode` / `bridgeConnected` fields are additive metadata for the frontend
+// to show the right "Start the Tally Bridge" guidance; response shapes stay
+// unchanged otherwise.
 
 tallyRouter.get("/tally/status", authenticate, async (_req, res) => {
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), CHECK_TIMEOUT_MS);
-    try {
-      // Any HTTP response (even an error envelope) means TallyPrime is
-      // reachable; only transport-level failures count as "not connected".
-      await fetch(tallyUrl(), {
-        method: "POST",
-        headers: { "Content-Type": "text/xml" },
-        body: "<ENVELOPE></ENVELOPE>",
-        signal: controller.signal,
-      });
-      return res.json({ connected: true, message: "TallyPrime is running" });
-    } finally {
-      clearTimeout(timer);
-    }
-  } catch {
-    return res.json({ connected: false, message: "Unable to connect to TallyPrime" });
+    // Any HTTP response (even an error envelope) means TallyPrime is reachable;
+    // only transport-level failures count as "not connected".
+    await pingTally();
+    return res.json({
+      connected: true,
+      message: "TallyPrime is running",
+      mode: transportMode(),
+      bridgeConnected: transportBridgeConnected(),
+    });
+  } catch (e) {
+    const message = e instanceof TallyError ? e.message : "Unable to connect to TallyPrime";
+    return res.json({
+      connected: false,
+      message,
+      mode: transportMode(),
+      bridgeConnected: transportBridgeConnected(),
+    });
   }
 });
 
@@ -56,10 +63,12 @@ tallyRouter.get("/tally/company", authenticate, async (_req, res) => {
       companyName: info.companyName,
       gstin: info.gstin,
       message: "Company information retrieved",
+      mode: transportMode(),
+      bridgeConnected: transportBridgeConnected(),
     });
   } catch (e) {
     const message = e instanceof TallyError ? e.message : "Unable to connect to TallyPrime";
-    return res.json({ connected: false, message });
+    return res.json({ connected: false, message, mode: transportMode(), bridgeConnected: transportBridgeConnected() });
   }
 });
 
@@ -129,10 +138,17 @@ function voucherHandler(kind: VoucherKind) {
         toDate: range.toIso,
         vouchers: result.vouchers,
         raw: result.raw,
+        mode: transportMode(),
+        bridgeConnected: transportBridgeConnected(),
       });
     } catch (e) {
       const message = e instanceof TallyError ? e.message : "Unable to connect to TallyPrime";
-      return res.json({ connected: false, message });
+      return res.json({
+        connected: false,
+        message,
+        mode: transportMode(),
+        bridgeConnected: transportBridgeConnected(),
+      });
     }
   };
 }

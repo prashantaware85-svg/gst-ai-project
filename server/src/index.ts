@@ -13,6 +13,7 @@ import { searchRouter } from "./routes/search.routes";
 import { chatRouter } from "./routes/chat.routes";
 import { notificationsRouter } from "./routes/notifications.routes";
 import { tallyRouter } from "./routes/tally.routes";
+import { startTallyBridgeServer } from "./services/tallyBridgeServer.service";
 import { gstRouter } from "./routes/gst.routes";
 import { reconciliationRouter } from "./routes/reconciliation.routes";
 import { errorHandler } from "./middleware/error.middleware";
@@ -75,9 +76,13 @@ app.use(errorHandler);
 
 const PORT = Number(process.env.PORT || 4000);
 const HOST = process.env.HOST || "0.0.0.0";
-const server = app.listen(PORT, HOST, () =>
-  logger.info(`GST AI Agent server on http://${HOST}:${PORT}`),
-);
+const server = app.listen(PORT, HOST, () => {
+  // Inbound wss://<host>/ws/bridge for the Windows Tally Bridge agent. The
+  // agent dials OUT to Render, so no inbound firewall rule / port forward is
+  // ever needed on the user's PC and TallyPrime's port 9000 stays private.
+  startTallyBridgeServer(server);
+  logger.info(`GST AI Agent server on http://${HOST}:${PORT}`);
+});
 
 server.on("error", (err: NodeJS.ErrnoException) => {
   if (err.code === "EADDRINUSE") {

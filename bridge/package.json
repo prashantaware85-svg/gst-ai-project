@@ -1,0 +1,20 @@
+{
+  "name": "gst-ai-tally-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Local Windows agent that connects the Render-hosted GST app to TallyPrime (localhost:9000) via an outbound secure WebSocket tunnel.",
+  "scripts": {
+    "start": "tsx bridge.ts",
+    "dev": "tsx watch bridge.ts",
+    "package:exe": "bun build ./bridge.ts --compile --minify --outfile dist/TallyBridge.exe"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "fast-xml-parser": "^5.11.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.16.0",
+    "typescript": "^5.5.4"
+  }
+}

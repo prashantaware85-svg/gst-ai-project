@@ -3,15 +3,19 @@ import { api } from "../api/client";
 import { Card, Stat, Table } from "../components/ui";
 import { useAuth } from "../hooks/useAuth";
 
-// Local TallyPrime connector. The browser talks to OUR API, which reaches the
-// user's localhost:9000 TallyPrime on the same machine — a cloud/Render
-// deployment can never reach a user's localhost, so this page targets local use.
+// TallyPrime connector. The browser talks ONLY to our API. How the backend
+// reaches the user's localhost:9000 TallyPrime is chosen server-side:
+//   direct  - the Express server runs on the same PC as TallyPrime (local dev),
+//   bridge  - a Windows "Tally Bridge" agent on the PC dials out to the hosted
+//             app over a secure WebSocket (production / Render).
+// The `mode` field in /api/tally responses drives which instructions are shown.
 
 interface CompanyInfo {
   connected: boolean;
   companyName?: string;
   gstin?: string | null;
   message?: string;
+  mode?: "direct" | "bridge";
 }
 
 interface ImportTotals {
@@ -66,6 +70,13 @@ const IMPORT_STEPS: Record<"sales" | "purchases", string[]> = {
   purchases: ["Connecting to Tally...", "Fetching Purchase...", "Processing vouchers...", "Saving data..."],
 };
 
+// Shown when the backend is in bridge mode and no bridge agent is connected.
+const BRIDGE_STEPS = [
+  "Open TallyPrime on this PC and enable the Tally XML/HTTP server on port 9000 (Advanced Configuration).",
+  "Start the Tally Bridge on this PC: double-click start-bridge.bat (or run TallyBridge.exe).",
+  "The bridge stays connected in the background; press Connect here again.",
+];
+
 function currentFinancialYear(): { from: string; to: string } {
   const now = new Date();
   const y = now.getFullYear();
@@ -106,6 +117,7 @@ export default function TallyIntegration() {
   const [dateError, setDateError] = useState("");
 
   const [status, setStatus] = useState<"idle" | "checking" | "connected" | "disconnected">("idle");
+  const [mode, setMode] = useState<"direct" | "bridge">("direct");
   const [company, setCompany] = useState<CompanyInfo | null>(null);
   const [statusMsg, setStatusMsg] = useState("");
 
@@ -142,6 +154,7 @@ export default function TallyIntegration() {
     try {
       const c: CompanyInfo = await api.tallyCompany();
       setCompany(c);
+      setMode(c.mode === "bridge" ? "bridge" : "direct");
       if (c.connected) {
         setStatus("connected");
         setStatusMsg(c.message || "TallyPrime is running");
@@ -163,6 +176,7 @@ export default function TallyIntegration() {
     setError("");
     try {
       const d = await api.tallyStatus();
+      setMode(d.mode === "bridge" ? "bridge" : "direct");
       if (d.connected) {
         setStatus("connected");
         setStatusMsg(d.message || "TallyPrime is running");
@@ -257,8 +271,8 @@ export default function TallyIntegration() {
               <div className="font-medium">{company.companyName}</div>
             </div>
             <div>
-              <div className="text-gray-500">Tally Status</div>
-              <div className="font-medium">{company.message || "TallyPrime is running"}</div>
+              <div className="text-gray-500">Connection Mode</div>
+              <div className="font-medium">{mode === "bridge" ? "Tally Bridge" : "Direct (local)"}</div>
             </div>
             <div>
               <div className="text-gray-500">Tally URL</div>
