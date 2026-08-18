@@ -54,6 +54,49 @@ model Invoice {
   @@index([invoiceDate])
 }
 
+// Tally data imported from TallyPrime's Day Book (read-only; never written back
+// to Tally). One row per voucher. Items are stored as a JSON array. Duplicate
+// imports are prevented with a unique company+voucherType+voucherNumber+date.
+model TallyImport {
+  id            Int      @id @default(autoincrement())
+  source        String   @default("TALLY")
+  voucherType   String // "Sales" | "Purchase"
+  voucherNumber String
+  voucherDate   DateTime
+  partyName     String?
+  partyGSTIN    String?
+  invoiceNumber String?
+  taxableValue  Decimal  @default(0)
+  cgst          Decimal  @default(0)
+  sgst          Decimal  @default(0)
+  igst          Decimal  @default(0)
+  roundOff      Decimal  @default(0)
+  totalAmount   Decimal  @default(0)
+  items         String   @default("[]")
+  companyName   String?
+  importedAt    DateTime @default(now())
+
+  @@unique([companyName, voucherType, voucherNumber, voucherDate])
+  @@index([voucherType, voucherDate])
+  @@index([source])
+  @@index([importedAt])
+}
+
+// One row per import run, powering the import summary in the Tally UI.
+model TallyImportRun {
+  id          Int      @id @default(autoincrement())
+  voucherType String
+  fromDate    DateTime
+  toDate      DateTime
+  imported    Int      @default(0)
+  skipped     Int      @default(0)
+  failed      Int      @default(0)
+  companyName String?
+  ranAt       DateTime @default(now())
+
+  @@index([ranAt])
+}
+
 model ReconciliationResult {
   id              Int      @id @default(autoincrement())
   runId           Int
@@ -130,6 +173,141 @@ model SalesReconciliationResult {
   @@index([runId, customerName])
   @@index([runId, bookInvoiceNo])
   @@index([status])
+}
+
+// ---------------------------------------------------------------------------
+// GST file import (Phase 2): GSTR-1 / GSTR-2B data uploaded as Excel/CSV/JSON.
+// These rows are the GST-side counterpart of the TallyImport rows used by the
+// reconciliation engine. Money is stored as Decimal on both schemas so the
+// arithmetic is exact and identical in dev (SQLite) and prod (Postgres).
+// ---------------------------------------------------------------------------
+
+// One row per uploaded GST file. Tracks validation/import counts so the UI can
+// show import history without storing the source file itself (files are parsed
+// and deleted immediately; the file name is kept as metadata only).
+model GstImportBatch {
+  id            Int      @id @default(autoincrement())
+  source        String   @default("GST")
+  returnType    String // "GSTR1" | "GSTR2B"
+  fileName      String
+  period        String // "YYYY-MM"
+  fromDate      DateTime?
+  toDate        DateTime?
+  totalRows     Int      @default(0)
+  validRows     Int      @default(0)
+  invalidRows   Int      @default(0)
+  duplicateRows Int      @default(0)
+  importedRows  Int      @default(0)
+  createdAt     DateTime @default(now())
+
+  transactions GstTransaction[]
+
+  @@index([returnType])
+  @@index([period])
+  @@index([createdAt])
+}
+
+// One row per valid GST invoice from an imported file. `gstin` is the owning
+// company GSTIN (when present in the file/upload params); `counterpartyGstin`
+// is the buyer (GSTR-1) or supplier (GSTR-2B) GSTIN. Document type preserves
+// INVOICE / CREDIT_NOTE / DEBIT_NOTE semantics.
+model GstTransaction {
+  id                Int      @id @default(autoincrement())
+  source            String   @default("GST")
+  returnType        String // "GSTR1" | "GSTR2B"
+  gstin             String?
+  counterpartyGstin String?
+  counterpartyName  String?
+  invoiceNumber     String
+  invoiceDate       DateTime
+  taxableValue      Decimal  @default(0)
+  cgst              Decimal  @default(0)
+  sgst              Decimal  @default(0)
+  igst              Decimal  @default(0)
+  invoiceValue      Decimal  @default(0)
+  placeOfSupply     String?
+  hsn               String?
+  documentType      String? // "INVOICE" | "CREDIT_NOTE" | "DEBIT_NOTE"
+  period            String // "YYYY-MM"
+  importBatchId     Int?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  importBatch GstImportBatch? @relation(fields: [importBatchId], references: [id])
+
+  // Deterministic dedupe key: the same file imported twice must not insert the
+  // same invoice twice. Note SQLite treats NULLs as distinct in unique indexes,
+  // so code-level dedupe also covers rows with a missing counterparty GSTIN.
+  @@unique([returnType, period, counterpartyGstin, invoiceNumber, invoiceDate])
+  @@index([gstin])
+  @@index([counterpartyGstin])
+  @@index([invoiceNumber])
+  @@index([invoiceDate])
+  @@index([returnType])
+  @@index([period])
+  @@index([period, returnType])
+}
+
+// One reconciliation run per period + transaction type. Stores the summary
+// counts returned by POST /api/reconciliation/run.
+model GstReconciliationRun {
+  id                      Int      @id @default(autoincrement())
+  period                  String // "YYYY-MM"
+  transactionType         String // "SALES" | "PURCHASE"
+  totalTally              Int      @default(0)
+  totalGst                Int      @default(0)
+  matched                 Int      @default(0)
+  amountMismatch          Int      @default(0)
+  dateMismatch            Int      @default(0)
+  invoiceNumberMismatch   Int      @default(0)
+  gstinMismatch           Int      @default(0)
+  missingInGst            Int      @default(0)
+  missingInTally          Int      @default(0)
+  duplicateInTally        Int      @default(0)
+  duplicateInGst          Int      @default(0)
+  possibleMatch           Int      @default(0)
+  invalidData             Int      @default(0)
+  createdAt               DateTime @default(now())
+
+  results GstReconciliationResult[]
+
+  @@index([period, transactionType])
+  @@index([createdAt])
+}
+
+// One row per Tally↔GST comparison. Source rows are never overwritten: this
+// result only references them and stores the derived status/differences plus
+// the manual review workflow fields.
+model GstReconciliationResult {
+  id                     Int      @id @default(autoincrement())
+  runId                  Int
+  period                 String // "YYYY-MM"
+  transactionType        String // "SALES" | "PURCHASE"
+  tallyTransactionId     Int? // -> TallyImport.id (no FK: TallyImport stays read-only)
+  gstTransactionId       Int? // -> GstTransaction.id
+  status                 String
+  matchLevel             String? // "LEVEL1"..."LEVEL5" | "DUPLICATE" | "NONE"
+  confidence             Int
+  taxableDifference      Decimal  @default(0)
+  cgstDifference         Decimal  @default(0)
+  sgstDifference         Decimal  @default(0)
+  igstDifference         Decimal  @default(0)
+  invoiceValueDifference Decimal  @default(0)
+  reason                 String?
+  reviewStatus           String? // "NONE" | "ACCEPTED" | "REJECTED" | "REVIEWED"
+  reviewedBy             String?
+  reviewedAt             DateTime?
+  reviewNote             String?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  run GstReconciliationRun @relation(fields: [runId], references: [id])
+
+  @@index([runId])
+  @@index([runId, status])
+  @@index([period, transactionType])
+  @@index([status])
+  @@index([reviewStatus])
 }
 
 model Notification {

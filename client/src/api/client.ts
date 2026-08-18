@@ -51,4 +51,58 @@ export const api = {
   notifications: () => http.get("/notifications").then((r) => r.data),
   markNotification: (id: number) =>
     http.post(`/notifications/${id}/read`).then((r) => r.data),
+  // TallyPrime local connector (read-only; Tally itself is never written to).
+  tallyStatus: () => http.get("/tally/status").then((r) => r.data),
+  tallyCompany: () => http.get("/tally/company").then((r) => r.data),
+  tallyVouchers: (type: "sales" | "purchases", fromDate: string, toDate: string) =>
+    http.get(`/tally/${type}`, { params: { fromDate, toDate } }).then((r) => r.data),
+  tallyImport: (type: "sales" | "purchases", fromDate: string, toDate: string) =>
+    http.post(`/tally/import`, null, { params: { type, fromDate, toDate } }).then((r) => r.data),
+  tallyImportSummary: () => http.get("/tally/import/summary").then((r) => r.data),
+  tallyImports: (type?: string) =>
+    http.get("/tally/imports", { params: { type } }).then((r) => r.data),
+  // GST return file import (Excel / CSV / JSON of GSTR-1 or GSTR-2B).
+  gstValidate: (returnType: "GSTR1" | "GSTR2B", period: string, file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("returnType", returnType);
+    form.append("period", period);
+    return http.post("/gst/validate", form).then((r) => r.data);
+  },
+  gstImport: (returnType: "GSTR1" | "GSTR2B", period: string, file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("returnType", returnType);
+    form.append("period", period);
+    return http.post("/gst/import", form).then((r) => r.data);
+  },
+  gstImports: (returnType?: string) =>
+    http.get("/gst/imports", { params: { returnType } }).then((r) => r.data),
+  gstImportDetail: (id: number) => http.get(`/gst/imports/${id}`).then((r) => r.data),
+  gstTransactions: (params: Record<string, string | number>) =>
+    http.get("/gst/transactions", { params }).then((r) => r.data),
+  // GST <-> Tally reconciliation engine.
+  reconRun: (period: string, transactionType: "SALES" | "PURCHASE") =>
+    http.post("/reconciliation/run", { period, transactionType }).then((r) => r.data),
+  reconSummary: (period: string, transactionType: "SALES" | "PURCHASE") =>
+    http.get("/reconciliation/summary", { params: { period, transactionType } }).then((r) => r.data),
+  reconResults: (params: Record<string, string | number>) =>
+    http.get("/reconciliation/results", { params }).then((r) => r.data),
+  reconResultDetail: (id: number) => http.get(`/reconciliation/results/${id}`).then((r) => r.data),
+  reconReview: (id: number, reviewStatus: string, reviewNote?: string) =>
+    http.patch(`/reconciliation/results/${id}`, { reviewStatus, reviewNote }).then((r) => r.data),
+  reconExport: async (period: string, transactionType: "SALES" | "PURCHASE", format: "xlsx" | "csv") => {
+    const r = await http.get("/reconciliation/export", {
+      params: { period, transactionType, format },
+      responseType: "blob",
+    });
+    const url = URL.createObjectURL(r.data as Blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `reconciliation-${period}-${transactionType.toLowerCase()}.${format}`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  },
 };

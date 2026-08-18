@@ -10,6 +10,9 @@ import SmartSearch from "./pages/SmartSearch";
 import Chat from "./pages/Chat";
 import Notifications from "./pages/Notifications";
 import Invoices from "./pages/Invoices";
+import TallyIntegration from "./pages/TallyIntegration";
+import GstImport from "./pages/GstImport";
+import Reconciliation from "./pages/Reconciliation";
 
 function Protected() {
   const { user, loading } = useAuth();
@@ -32,6 +35,9 @@ export default function App() {
           <Route path="/search" element={<SmartSearch />} />
           <Route path="/chat" element={<Chat />} />
           <Route path="/notifications" element={<Notifications />} />
+          <Route path="/tally" element={<TallyIntegration />} />
+          <Route path="/gst-import" element={<GstImport />} />
+          <Route path="/reconcile" element={<Reconciliation />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

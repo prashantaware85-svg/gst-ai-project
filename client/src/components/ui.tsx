@@ -16,6 +16,7 @@ export function Stat({ title, value, accent = "text-brand-600" }: { title: strin
 }
 
 const PILL_COLORS: Record<string, string> = {
+  green: "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-200",
   purple: "bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-200",
   fuchsia: "bg-fuchsia-100 text-fuchsia-700 dark:bg-fuchsia-900 dark:text-fuchsia-200",
   red: "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-200",
@@ -33,6 +34,17 @@ const STATUS_STYLES: Record<string, string> = {
   MISSING_IN_2B:   "bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-200",
   MISSING_IN_BOOKS:"bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-200",
   DUPLICATE:       "bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-200",
+  // Phase 2 GST reconciliation statuses.
+  AMOUNT_MISMATCH:  "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-200",
+  DATE_MISMATCH:    "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-200",
+  INVOICE_NUMBER_MISMATCH: "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-200",
+  GSTIN_MISMATCH:   "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-200",
+  MISSING_IN_GST:   "bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-200",
+  MISSING_IN_TALLY: "bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-200",
+  DUPLICATE_IN_TALLY: "bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-200",
+  DUPLICATE_IN_GST: "bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-200",
+  POSSIBLE_MATCH:   "bg-fuchsia-100 text-fuchsia-700 dark:bg-fuchsia-900 dark:text-fuchsia-200",
+  INVALID_DATA:     "bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200",
 };
 export function StatusBadge({ status }: { status: string }) {
   return <span className={`text-xs px-2 py-0.5 rounded ${STATUS_STYLES[status] || STATUS_STYLES.MISMATCHED}`}>{status.replace(/_/g, " ")}</span>;

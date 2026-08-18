@@ -12,6 +12,9 @@ import { vendorsRouter } from "./routes/vendors.routes";
 import { searchRouter } from "./routes/search.routes";
 import { chatRouter } from "./routes/chat.routes";
 import { notificationsRouter } from "./routes/notifications.routes";
+import { tallyRouter } from "./routes/tally.routes";
+import { gstRouter } from "./routes/gst.routes";
+import { reconciliationRouter } from "./routes/reconciliation.routes";
 import { errorHandler } from "./middleware/error.middleware";
 import { logger } from "./utils/logger";
 import { ensureDirs } from "./utils/fs";
@@ -40,6 +43,9 @@ app.use("/api", vendorsRouter);
 app.use("/api", searchRouter);
 app.use("/api", chatRouter);
 app.use("/api", notificationsRouter);
+app.use("/api", tallyRouter);
+app.use("/api", gstRouter);
+app.use("/api", reconciliationRouter);
 
 app.get("/health", (_req, res) => res.json({ ok: true, guestAuth: guestAuthEnabled() }));
 

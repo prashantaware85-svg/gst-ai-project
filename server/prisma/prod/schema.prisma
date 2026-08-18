@@ -68,6 +68,49 @@ model Invoice {
   @@index([invoiceDate])
 }
 
+// Tally data imported from TallyPrime's Day Book (read-only; never written back
+// to Tally). One row per voucher. Items are stored as a JSON array. Duplicate
+// imports are prevented with a unique company+voucherType+voucherNumber+date.
+model TallyImport {
+  id            Int      @id @default(autoincrement())
+  source        String   @default("TALLY")
+  voucherType   String // "Sales" | "Purchase"
+  voucherNumber String
+  voucherDate   DateTime
+  partyName     String?
+  partyGSTIN    String?
+  invoiceNumber String?
+  taxableValue  Decimal  @default(0) @db.Decimal(18, 2)
+  cgst          Decimal  @default(0) @db.Decimal(18, 2)
+  sgst          Decimal  @default(0) @db.Decimal(18, 2)
+  igst          Decimal  @default(0) @db.Decimal(18, 2)
+  roundOff      Decimal  @default(0) @db.Decimal(18, 2)
+  totalAmount   Decimal  @default(0) @db.Decimal(18, 2)
+  items         String   @default("[]")
+  companyName   String?
+  importedAt    DateTime @default(now())
+
+  @@unique([companyName, voucherType, voucherNumber, voucherDate])
+  @@index([voucherType, voucherDate])
+  @@index([source])
+  @@index([importedAt])
+}
+
+// One row per import run, powering the import summary in the Tally UI.
+model TallyImportRun {
+  id          Int      @id @default(autoincrement())
+  voucherType String
+  fromDate    DateTime
+  toDate      DateTime
+  imported    Int      @default(0)
+  skipped     Int      @default(0)
+  failed      Int      @default(0)
+  companyName String?
+  ranAt       DateTime @default(now())
+
+  @@index([ranAt])
+}
+
 model ReconciliationResult {
   id              Int      @id @default(autoincrement())
   runId           Int
@@ -144,6 +187,119 @@ model SalesReconciliationResult {
   @@index([runId, customerName])
   @@index([runId, bookInvoiceNo])
   @@index([status])
+}
+
+model GstImportBatch {
+  id            Int      @id @default(autoincrement())
+  source        String   @default("GST")
+  returnType    String // "GSTR1" | "GSTR2B"
+  fileName      String
+  period        String // "YYYY-MM"
+  fromDate      DateTime?
+  toDate        DateTime?
+  totalRows     Int      @default(0)
+  validRows     Int      @default(0)
+  invalidRows   Int      @default(0)
+  duplicateRows Int      @default(0)
+  importedRows  Int      @default(0)
+  createdAt     DateTime @default(now())
+
+  transactions GstTransaction[]
+
+  @@index([returnType])
+  @@index([period])
+  @@index([createdAt])
+}
+
+model GstTransaction {
+  id                Int      @id @default(autoincrement())
+  source            String   @default("GST")
+  returnType        String // "GSTR1" | "GSTR2B"
+  gstin             String?
+  counterpartyGstin String?
+  counterpartyName  String?
+  invoiceNumber     String
+  invoiceDate       DateTime
+  taxableValue      Decimal  @default(0) @db.Decimal(18, 2)
+  cgst              Decimal  @default(0) @db.Decimal(18, 2)
+  sgst              Decimal  @default(0) @db.Decimal(18, 2)
+  igst              Decimal  @default(0) @db.Decimal(18, 2)
+  invoiceValue      Decimal  @default(0) @db.Decimal(18, 2)
+  placeOfSupply     String?
+  hsn               String?
+  documentType      String? // "INVOICE" | "CREDIT_NOTE" | "DEBIT_NOTE"
+  period            String // "YYYY-MM"
+  importBatchId     Int?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  importBatch GstImportBatch? @relation(fields: [importBatchId], references: [id])
+
+  @@unique([returnType, period, counterpartyGstin, invoiceNumber, invoiceDate])
+  @@index([gstin])
+  @@index([counterpartyGstin])
+  @@index([invoiceNumber])
+  @@index([invoiceDate])
+  @@index([returnType])
+  @@index([period])
+  @@index([period, returnType])
+}
+
+model GstReconciliationRun {
+  id                      Int      @id @default(autoincrement())
+  period                  String // "YYYY-MM"
+  transactionType         String // "SALES" | "PURCHASE"
+  totalTally              Int      @default(0)
+  totalGst                Int      @default(0)
+  matched                 Int      @default(0)
+  amountMismatch          Int      @default(0)
+  dateMismatch            Int      @default(0)
+  invoiceNumberMismatch   Int      @default(0)
+  gstinMismatch           Int      @default(0)
+  missingInGst            Int      @default(0)
+  missingInTally          Int      @default(0)
+  duplicateInTally        Int      @default(0)
+  duplicateInGst          Int      @default(0)
+  possibleMatch           Int      @default(0)
+  invalidData             Int      @default(0)
+  createdAt               DateTime @default(now())
+
+  results GstReconciliationResult[]
+
+  @@index([period, transactionType])
+  @@index([createdAt])
+}
+
+model GstReconciliationResult {
+  id                     Int      @id @default(autoincrement())
+  runId                  Int
+  period                 String // "YYYY-MM"
+  transactionType        String // "SALES" | "PURCHASE"
+  tallyTransactionId     Int?
+  gstTransactionId       Int?
+  status                 String
+  matchLevel             String?
+  confidence             Int
+  taxableDifference      Decimal  @default(0) @db.Decimal(18, 2)
+  cgstDifference         Decimal  @default(0) @db.Decimal(18, 2)
+  sgstDifference         Decimal  @default(0) @db.Decimal(18, 2)
+  igstDifference         Decimal  @default(0) @db.Decimal(18, 2)
+  invoiceValueDifference Decimal  @default(0) @db.Decimal(18, 2)
+  reason                 String?
+  reviewStatus           String? // "NONE" | "ACCEPTED" | "REJECTED" | "REVIEWED"
+  reviewedBy             String?
+  reviewedAt             DateTime?
+  reviewNote             String?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  run GstReconciliationRun @relation(fields: [runId], references: [id])
+
+  @@index([runId])
+  @@index([runId, status])
+  @@index([period, transactionType])
+  @@index([status])
+  @@index([reviewStatus])
 }
 
 model Notification {

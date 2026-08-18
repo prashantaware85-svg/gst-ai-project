@@ -34,3 +34,10 @@ export function isProdEnv(): boolean {
 export function guestAuthEnabled(): boolean {
   return process.env.GUEST_AUTH === "true";
 }
+
+// Local TallyPrime connector. TallyPrime listens on localhost:9000 by default
+// (XML-over-HTTP). Cloud servers cannot reach a localhost TallyPrime, so this
+// is intended for local development where TallyPrime runs on the same machine.
+export function tallyUrl(): string {
+  return process.env.TALLY_URL || "http://localhost:9000";
+}

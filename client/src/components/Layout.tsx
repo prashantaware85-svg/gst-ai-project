@@ -11,6 +11,9 @@ const links = [
   { to: "/search", label: "Smart Search" },
   { to: "/chat", label: "AI Assistant" },
   { to: "/notifications", label: "Notifications" },
+  { to: "/tally", label: "Tally Import" },
+  { to: "/gst-import", label: "GST Import" },
+  { to: "/reconcile", label: "Reconcile" },
 ];
 
 export default function Layout() {
