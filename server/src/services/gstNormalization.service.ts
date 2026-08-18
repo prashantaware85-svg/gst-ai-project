@@ -27,6 +27,7 @@ export interface NormalizedGstRow {
   cgst: number;
   sgst: number;
   igst: number;
+  cess: number;
   invoiceValue: number;
   placeOfSupply: string | null;
   hsn: string | null;
@@ -55,6 +56,10 @@ const COUNTERPARTY_GSTIN_ALIASES = [
   "RECEIVER GSTIN", "COUNTERPARTY GSTIN", "PARTY GSTIN", "BUYER GSTIN",
   "SELLER GSTIN", "GSTIN OF SUPPLIER", "GSTIN OF CUSTOMER", "BILL TO GSTIN",
   "CTIN",
+  // GST portal offline-utility spellings (b2b sheet + GSTR1 Report).
+  "GSTIN/UIN NO.", "GSTIN/UIN NO", "GSTIN/UIN NUMBER", "GSTIN/UIN OF RECIPIENT",
+  "GSTIN OF RECIPIENT", "GSTIN OF THE RECIPIENT", "RECIPIENT'S GSTIN",
+  "RECIPIENTS GSTIN",
 ];
 
 const COUNTERPARTY_NAME_ALIASES = [
@@ -62,6 +67,8 @@ const COUNTERPARTY_NAME_ALIASES = [
   "COUNTERPARTY NAME", "BUYER NAME", "SELLER NAME", "TRADE NAME",
   "TRADE/LEGAL NAME OF SUPPLIER", "TRADE/LEGAL NAME OF CUSTOMER",
   "LEGAL NAME", "BILL TO", "SUPPLIER", "CUSTOMER",
+  // GST portal offline-utility spellings (b2b sheet + GSTR1 Report).
+  "RECEIVER NAME", "RECEIVER", "RECIPIENT NAME",
 ];
 
 const INVOICE_NUMBER_ALIASES = [
@@ -88,7 +95,7 @@ const CGST_ALIASES = [
 
 const SGST_ALIASES = [
   "SGST", "SGST AMOUNT", "STATE/UT TAX AMOUNT", "STATE TAX AMOUNT", "STATE TAX",
-  "SGST TAX AMOUNT", "SAMT",
+  "SGST TAX AMOUNT", "SAMT", "STATE/UT TAX",
 ];
 
 const IGST_ALIASES = [
@@ -96,10 +103,23 @@ const IGST_ALIASES = [
   "IGST TAX AMOUNT", "IAMT",
 ];
 
+// GST portal offline-utility exports carry a "Rate" column (percentage) on the
+// B2B breakdown sheets; used to derive CGST/SGST when no tax columns exist.
+const RATE_ALIASES = [
+  "RATE", "TAX RATE", "GST RATE", "APPLICABLE % OF TAX RATE",
+  "APPLICABLE % OF TAX RATE (%)", "APPLICABLE % TAX RATE",
+  "APPLICABLE PERCENTAGE OF TAX RATE", "TAX RATE(%)", "GST RATE(%)",
+];
+
+const CESS_ALIASES = [
+  "CESS", "CESS AMOUNT", "CESS TAX AMOUNT", "CESS AMOUNT (INR)",
+  "CESS (INR)", "CSAMT",
+];
+
 const INVOICE_VALUE_ALIASES = [
   "INVOICE VALUE", "INVOICE AMOUNT", "TOTAL INVOICE VALUE", "TOTAL VALUE",
   "GROSS AMOUNT", "TOTAL AMOUNT", "TOTAL", "INVOICE TOTAL", "TAXABLE AND TAX",
-  "BILL VALUE",
+  "BILL VALUE", "VALUE", "INVOICE VALUE (INR)",
 ];
 
 const PLACE_OF_SUPPLY_ALIASES = [
@@ -117,7 +137,42 @@ const DOCUMENT_TYPE_ALIASES = [
   "DOC TYPE CODE", "INVOICE TYPE",
 ];
 
-function headerKey(s: string): string {
+// Canonical field name -> alias list. Kept in one place so the spreadsheet
+// parser and mapGstRow agree on what a header cell means.
+const FIELD_ALIASES: [string, string[]][] = [
+  ["gstin", OWN_GSTIN_ALIASES],
+  ["counterpartyGstin", COUNTERPARTY_GSTIN_ALIASES],
+  ["counterpartyName", COUNTERPARTY_NAME_ALIASES],
+  ["invoiceNumber", INVOICE_NUMBER_ALIASES],
+  ["invoiceDate", INVOICE_DATE_ALIASES],
+  ["taxableValue", TAXABLE_VALUE_ALIASES],
+  ["cgst", CGST_ALIASES],
+  ["sgst", SGST_ALIASES],
+  ["igst", IGST_ALIASES],
+  ["cess", CESS_ALIASES],
+  ["invoiceValue", INVOICE_VALUE_ALIASES],
+  ["rate", RATE_ALIASES],
+  ["placeOfSupply", PLACE_OF_SUPPLY_ALIASES],
+  ["hsn", HSN_ALIASES],
+  ["documentType", DOCUMENT_TYPE_ALIASES],
+];
+
+// Map a header cell to its canonical field name, or null when the cell is not a
+// recognized column. Case-insensitive like the rest of the layer. The GST
+// spreadsheet parser uses this to (a) locate the header row inside the first
+// few rows of a sheet and (b) build the column->value record fed to mapGstRow.
+export function resolveHeaderField(header: unknown): string | null {
+  const k = headerKey(header);
+  if (!k) return null;
+  for (const [field, aliases] of FIELD_ALIASES) {
+    for (const a of aliases) {
+      if (headerKey(a) === k) return field;
+    }
+  }
+  return null;
+}
+
+function headerKey(s: unknown): string {
   return String(s ?? "")
     .trim()
     .toUpperCase()
@@ -341,17 +396,39 @@ export function mapGstRow(
   // value (e.g. "abc") is an attribute-level error. GSTR files legitimately
   // leave CGST/SGST blank on IGST rows, and an absent column is common.
   const taxable = moneyOf(lookup, TAXABLE_VALUE_ALIASES);
-  const cgst = moneyOf(lookup, CGST_ALIASES);
-  const sgst = moneyOf(lookup, SGST_ALIASES);
+  let cgst = moneyOf(lookup, CGST_ALIASES);
+  let sgst = moneyOf(lookup, SGST_ALIASES);
   const igst = moneyOf(lookup, IGST_ALIASES);
+  const cess = moneyOf(lookup, CESS_ALIASES);
   const invoiceValue = toCents(pick(lookup, INVOICE_VALUE_ALIASES));
 
   if (taxable.error) errors.push("Taxable value is not numeric");
   if (cgst.error) errors.push("CGST is not numeric");
   if (sgst.error) errors.push("SGST is not numeric");
   if (igst.error) errors.push("IGST is not numeric");
+  if (cess.error) errors.push("CESS is not numeric");
 
-  const computedInvoiceValue = centsSum(taxable.cents, cgst.cents, sgst.cents, igst.cents);
+  // The GST portal offline-utility B2B sheets carry "Rate" and "Taxable Value"
+  // but no CGST/SGST/IGST columns at all. When every tax head is absent (zero)
+  // and a non-zero rate is present, derive the intra-state split
+  // CGST = SGST = taxable × rate / 200. Explicit IGST/CGST/SGST values are
+  // always preserved untouched, and nil-rated rows (rate 0) stay at zero.
+  const rate = percentOf(pick(lookup, RATE_ALIASES));
+  if (
+    cgst.cents === 0 &&
+    sgst.cents === 0 &&
+    igst.cents === 0 &&
+    rate !== null &&
+    rate > 0 &&
+    taxable.cents !== 0
+  ) {
+    // Round each head independently to mirror the portal's own tax display.
+    const head = Math.round((taxable.cents * rate) / 200);
+    cgst = { cents: head, error: false };
+    sgst = { cents: head, error: false };
+  }
+
+  const computedInvoiceValue = centsSum(taxable.cents, cgst.cents, sgst.cents, igst.cents, cess.cents);
 
   return {
     row: {
@@ -364,6 +441,7 @@ export function mapGstRow(
       cgst: amountFromCents(cgst.cents),
       sgst: amountFromCents(sgst.cents),
       igst: amountFromCents(igst.cents),
+      cess: amountFromCents(cess.cents),
       invoiceValue: amountFromCents(invoiceValue ?? computedInvoiceValue),
       placeOfSupply: clean(pick(lookup, PLACE_OF_SUPPLY_ALIASES)),
       hsn: clean(pick(lookup, HSN_ALIASES)),
@@ -371,6 +449,16 @@ export function mapGstRow(
     },
     errors,
   };
+}
+
+// Parse a percentage rate cell ("18.0", "5%", 18) into points, or null when the
+// cell is absent or not a valid percentage.
+function percentOf(v: unknown): number | null {
+  if (v === null || v === undefined || v === "") return null;
+  const s = String(v).trim().replace(/%/g, "");
+  if (!s) return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
 }
 
 // Validate a normalized row. Returns canonical error strings; an empty array
@@ -386,6 +474,7 @@ export function validateGstRow(
   if (!Number.isFinite(row.cgst)) errors.push("CGST must be numeric");
   if (!Number.isFinite(row.sgst)) errors.push("SGST must be numeric");
   if (!Number.isFinite(row.igst)) errors.push("IGST must be numeric");
+  if (!Number.isFinite(row.cess)) errors.push("CESS must be numeric");
   if (
     row.invoiceValue !== undefined &&
     row.invoiceValue !== null &&

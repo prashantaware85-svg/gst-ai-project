@@ -10,6 +10,7 @@ import {
   validateGstRow,
   isoOf,
   gstTransactionKey,
+  resolveHeaderField,
 } from "../src/services/gstNormalization.service";
 
 test("normalizeInvoiceText uppercases and collapses whitespace but keeps / and -", () => {
@@ -95,6 +96,7 @@ test("validateGstRow rejects missing invoice/date and invalid GSTIN formats", ()
     cgst: 90,
     sgst: 90,
     igst: 0,
+    cess: 0,
     invoiceValue: 1180,
     placeOfSupply: null,
     hsn: null,
@@ -118,4 +120,118 @@ test("gstTransactionKey is deterministic and normalizes empties", () => {
   // Different return type / period / invoice must not collide.
   assert.notEqual(gstTransactionKey(a, "GSTR1", "2026-04"), gstTransactionKey(a, "GSTR2B", "2026-04"));
   assert.notEqual(gstTransactionKey(a, "GSTR1", "2026-04"), gstTransactionKey(a, "GSTR1", "2026-05"));
+});
+
+test("mapGstRow resolves GST portal offline-utility column spellings", () => {
+  const { row, errors } = mapGstRow(
+    {
+      "GSTIN/UIN of Recipient": "27ABCDE1234F1Z5",
+      "Receiver Name": "Acme Traders",
+      "Invoice Number": "26-27/INV-001",
+      "Invoice date": "01-07-2026",
+      "Invoice Value": "4800",
+      "Place Of Supply": "27-Maharashtra",
+      Rate: "5.0",
+      "Taxable Value": "4571.43",
+      "Cess Amount": "0.0",
+      "Invoice Type": "Regular B2B",
+    },
+    "GSTR1",
+  );
+  assert.deepEqual(errors, []);
+  assert.equal(row.counterpartyGstin, "27ABCDE1234F1Z5");
+  assert.equal(row.counterpartyName, "Acme Traders");
+  assert.equal(row.invoiceNumber, "26-27/INV-001");
+  assert.equal(isoOf(row.invoiceDate!), "2026-07-01");
+  assert.equal(row.invoiceValue, 4800);
+  assert.equal(row.placeOfSupply, "27-Maharashtra");
+  assert.equal(row.documentType, "INVOICE");
+});
+
+test("mapGstRow maps the GSTR1 Report merged-header spellings", () => {
+  // resolveHeaderColumns merges the two-row Report header (parent "Invoice"
+  // cells + child "No."/"Date"/"Value") into "Invoice No." etc.; that merged
+  // text is what the parser hands to mapGstRow, with actual Central Tax /
+  // State/UT Tax values carried alongside.
+  const { row, errors } = mapGstRow(
+    {
+      "GSTIN/UIN No.": "27ABCDE1234F1Z5",
+      "Party Name": "Bajaj Brothers",
+      "Invoice No.": "26-27/ABC255",
+      "Invoice Date": "01-07-2026",
+      "Invoice Value": "4800",
+      Rate: "5.0",
+      "Taxable Value": "4571.43",
+      "Integrated Tax": "0.0",
+      "Central Tax": "114.29",
+      "State/UT Tax": "114.29",
+      CESS: "0.0",
+      "Place Of Supply": "Maharashtra",
+    },
+    "GSTR1",
+  );
+  assert.deepEqual(errors, []);
+  assert.equal(row.counterpartyGstin, "27ABCDE1234F1Z5");
+  assert.equal(row.invoiceNumber, "26-27/ABC255");
+  assert.equal(isoOf(row.invoiceDate!), "2026-07-01");
+  assert.equal(row.cgst, 114.29);
+  assert.equal(row.sgst, 114.29);
+  assert.equal(row.igst, 0);
+  assert.equal(row.invoiceValue, 4800);
+});
+
+test("mapGstRow derives CGST/SGST from Rate x Taxable when no tax columns exist", () => {
+  const { row, errors } = mapGstRow(
+    {
+      "GSTIN/UIN of Recipient": "27ABCDE1234F1Z5",
+      "Invoice Number": "26-27/INV-008",
+      "Invoice date": "05-07-2026",
+      Rate: "18.0",
+      "Taxable Value": "9000",
+      "Cess Amount": "0.0",
+    },
+    "GSTR1",
+  );
+  assert.deepEqual(errors, []);
+  assert.equal(row.cgst, 810); // 9000 * 18% / 2
+  assert.equal(row.sgst, 810);
+  assert.equal(row.igst, 0);
+  assert.equal(row.invoiceValue, 10620);
+});
+
+test("mapGstRow derives each tax head independently to match portal rounding", () => {
+  const { row } = mapGstRow(
+    { Rate: "5.0", "Taxable Value": "4571.43" },
+    "GSTR1",
+  );
+  // 4571.43 * 5 / 200 = 114.28575 -> 114.29 per head.
+  assert.equal(row.cgst, 114.29);
+  assert.equal(row.sgst, 114.29);
+});
+
+test("mapGstRow preserves explicit IGST; nil-rated rows stay at zero", () => {
+  const inter = mapGstRow(
+    { Rate: "18.0", "Taxable Value": "1000", IGST: "180" },
+    "GSTR1",
+  ).row;
+  assert.equal(inter.cgst, 0);
+  assert.equal(inter.sgst, 0);
+  assert.equal(inter.igst, 180);
+
+  const nil = mapGstRow({ Rate: "0.0", "Taxable Value": "192" }, "GSTR1").row;
+  assert.equal(nil.cgst, 0);
+  assert.equal(nil.sgst, 0);
+});
+
+test("resolveHeaderField recognizes portal headers individually", () => {
+  assert.equal(resolveHeaderField("GSTIN/UIN of Recipient"), "counterpartyGstin");
+  assert.equal(resolveHeaderField("Receiver Name"), "counterpartyName");
+  assert.equal(resolveHeaderField("Invoice date"), "invoiceDate");
+  assert.equal(resolveHeaderField("Taxable Value"), "taxableValue");
+  assert.equal(resolveHeaderField("Central Tax"), "cgst");
+  assert.equal(resolveHeaderField("State/UT Tax"), "sgst");
+  assert.equal(resolveHeaderField("Integrated Tax"), "igst");
+  assert.equal(resolveHeaderField("Cess Amount"), "cess");
+  assert.equal(resolveHeaderField("Place Of Supply"), "placeOfSupply");
+  assert.equal(resolveHeaderField("Nonsense Column"), null);
 });

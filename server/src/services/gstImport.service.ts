@@ -18,6 +18,7 @@ import { num } from "../utils/db";
 import {
   mapGstRow,
   normalizeInvoiceText,
+  resolveHeaderField,
   validateGstRow,
   type GstReturnType,
   type NormalizedGstRow,
@@ -49,11 +50,20 @@ export interface ImportBatchSummary {
   duplicates: number;
   imported: number;
   errors: string[];
+  // Portal multi-rate rows collapsed into single transactions.
+  aggregated?: number;
 }
 
 interface ParsedEntry {
   row: NormalizedGstRow;
   columnErrors: string[];
+}
+
+interface ParsedFile {
+  entries: ParsedEntry[];
+  // Spreadsheet rows collapsed into a single transaction by multi-rate
+  // aggregation (one portal row per invoice per tax rate).
+  aggregated: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -80,6 +90,7 @@ function portalRowToNormalized(r: any): NormalizedGstRow {
     cgst,
     sgst,
     igst,
+    cess: Number(r.cess) || 0,
     invoiceValue: taxable + cgst + sgst + igst + cess,
     placeOfSupply: null,
     hsn: null,
@@ -94,8 +105,18 @@ export function parseGstFile(
   fileName: string,
   returnType: GstReturnType,
 ): ParsedEntry[] {
+  return parseGstFileDetailed(buffer, fileName, returnType).entries;
+}
+
+// parseGstFile plus the number of spreadsheet rows collapsed by multi-rate
+// aggregation (so summaries can report raw-vs-aggregated counts).
+export function parseGstFileDetailed(
+  buffer: Buffer,
+  fileName: string,
+  returnType: GstReturnType,
+): ParsedFile {
   const ext = extOf(fileName);
-  if (ext === "json") return parseGstJson(buffer, returnType);
+  if (ext === "json") return { entries: parseGstJson(buffer, returnType), aggregated: 0 };
   return parseSpreadsheet(buffer, fileName, returnType);
 }
 
@@ -132,7 +153,222 @@ function parseGstJson(buffer: Buffer, returnType: GstReturnType): ParsedEntry[] 
   }
 }
 
-function parseSpreadsheet(buffer: Buffer, fileName: string, returnType: GstReturnType): ParsedEntry[] {
+// The GST portal offline-utility workbook ships one full-report sheet plus one
+// breakdown sheet per table. Only invoice-level B2B tables belong in the sales
+// register; the summary/aggregate tables (HSN, B2CS, docs, advances, ...) carry
+// no invoice lines and must not be imported.
+const REPORT_SHEET = "gstr1 report";
+const B2B_SHEET = "b2b,sez,de";
+const SKIP_SHEETS = new Set([
+  "b2cl", "b2cs", "cdnr", "cdnur", "exp", "at", "atadj", "exemp",
+  "hsn(b2b)", "hsn(b2c)", "docs",
+  "itemwisesale", "itemwisesalereturn", "itemsummary",
+]);
+// Header rows never sit deeper than this many rows from the top of a sheet.
+const MAX_HEADER_SCAN = 12;
+
+function sheetKey(name: string): string {
+  return String(name ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+// Actual sheet name in the workbook whose normalized key matches, or null.
+function findSheetName(wb: XLSX.WorkBook, targetKey: string): string | null {
+  for (const name of wb.SheetNames) {
+    if (sheetKey(name) === targetKey) return name;
+  }
+  return null;
+}
+
+function sheetAoa(ws: XLSX.WorkSheet): unknown[][] {
+  return XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: "" }) as unknown[][];
+}
+
+// Index of the last row in the scan window that looks like a header (>=2 cells
+// resolve to known GST columns), or -1. Taking the last match lets a two-row
+// merged header (portal's GSTR1 Report) resolve to its detail row.
+function findHeaderRowIndex(aoa: unknown[][]): number {
+  const limit = Math.min(aoa.length, MAX_HEADER_SCAN);
+  let found = -1;
+  for (let i = 0; i < limit; i++) {
+    const row = aoa[i] || [];
+    let matches = 0;
+    for (const cell of row) {
+      if (resolveHeaderField(cell) !== null) matches += 1;
+    }
+    if (matches >= 2) found = i;
+  }
+  return found;
+}
+
+interface ResolvedColumn {
+  field: string | null;
+  text: string | null;
+}
+
+// Effective field per column, merging two-row headers: a sub-header cell wins
+// when it resolves alone, otherwise the parent cell is tried and parent+child
+// combined (portal's "Invoice | No. / Date / Value" merge).
+function resolveHeaderColumns(parentRow: unknown[], childRow: unknown[]): ResolvedColumn[] {
+  const count = Math.max(parentRow.length, childRow.length);
+  const out: ResolvedColumn[] = [];
+  for (let c = 0; c < count; c++) {
+    const p = String(parentRow[c] ?? "").trim();
+    const ch = String(childRow[c] ?? "").trim();
+    const candidates = ch ? [ch, p && ch ? `${p} ${ch}` : null, p || null] : p ? [p] : [];
+    let resolved: ResolvedColumn = { field: null, text: null };
+    for (const cand of candidates) {
+      const field = cand ? resolveHeaderField(cand) : null;
+      if (field !== null) {
+        resolved = { field, text: cand };
+        break;
+      }
+    }
+    out.push(resolved);
+  }
+  return out;
+}
+
+// Emit mapped rows for one sheet in place. Only rows that could be a
+// transaction are pushed: rows with none of GSTIN / invoice number / invoice
+// date (empty footers, "Totals" lines, stray cells) are skipped — never
+// imported as phantom zero records. With `requireGstin`, rows without a
+// counterparty GSTIN are also dropped (the GSTR1 Report mixes B2B invoices and
+// B2CS/consumer lines; only the registered-recipient rows are the sales
+// register).
+function emitSheet(
+  wb: XLSX.WorkBook,
+  sheetName: string,
+  returnType: GstReturnType,
+  out: ParsedEntry[],
+  options?: { requireGstin?: boolean },
+): void {
+  const ws = wb.Sheets[sheetName];
+  if (!ws) return;
+  const aoa = sheetAoa(ws);
+  const headerIdx = findHeaderRowIndex(aoa);
+  if (headerIdx < 0) return;
+  const columns = resolveHeaderColumns(aoa[headerIdx - 1] || [], aoa[headerIdx] || []);
+  // A transaction sheet must expose an invoice-number or invoice-date column;
+  // aggregate tables (HSN, B2CS, documents issued, ...) have neither.
+  const hasInvoiceCol = columns.some(
+    (col) => col.field === "invoiceNumber" || col.field === "invoiceDate",
+  );
+  if (!hasInvoiceCol) return;
+
+  for (let r = headerIdx + 1; r < aoa.length; r++) {
+    const cells = aoa[r] || [];
+    const raw: Record<string, unknown> = {};
+    for (let c = 0; c < columns.length; c++) {
+      const col = columns[c];
+      if (!col.field || !col.text) continue;
+      if (!(col.text in raw)) raw[col.text] = cells[c];
+    }
+    if (!Object.keys(raw).length) continue;
+    // A trailing "Totals" line reuses the sheet's GSTIN column as a label; it
+    // is a summary row, not a transaction.
+    let totalLike = false;
+    for (const col of columns) {
+      if (col.field === "counterpartyGstin" && col.text) {
+        const label = String(raw[col.text] ?? "").trim().toUpperCase();
+        if (/^(GRAND\s+)?TOTAL/i.test(label)) {
+          totalLike = true;
+          break;
+        }
+      }
+    }
+    if (totalLike) continue;
+    const mapped = mapGstRow(raw, returnType);
+    const row = mapped.row;
+    if (!row.counterpartyGstin && !row.invoiceNumber && !row.invoiceDate) continue;
+    if (options?.requireGstin && !row.counterpartyGstin) continue;
+    out.push({ row, columnErrors: mapped.errors });
+  }
+}
+
+// Collapse the multi-rate rows the portal emits for one invoice (a row per tax
+// rate) into a single transaction per (gstin, invoice number, date). Rows that
+// are exact duplicates (same identity AND same amounts) are NOT merged — they
+// stay separate so validateBatch flags them as duplicates.
+function aggregateEntries(
+  entries: ParsedEntry[],
+  returnType: GstReturnType,
+): { entries: ParsedEntry[]; aggregated: number } {
+  const out: ParsedEntry[] = [];
+  const seen = new Map<string, number>();
+  let aggregated = 0;
+  for (const entry of entries) {
+    const key = aggregateKey(entry.row, returnType);
+    const existing = seen.get(key);
+    if (existing === undefined) {
+      seen.set(key, out.length);
+      out.push(entry);
+    } else {
+      const prev = out[existing].row;
+      if (isExactDuplicate(prev, entry.row)) {
+        // Genuine duplicate row — leave it in place for dedupe to catch.
+        out.push(entry);
+      } else {
+        out[existing] = {
+          row: mergeRows(prev, entry.row),
+          columnErrors: out[existing].columnErrors,
+        };
+        aggregated += 1;
+      }
+    }
+  }
+  return { entries: out, aggregated };
+}
+
+function isExactDuplicate(a: NormalizedGstRow, b: NormalizedGstRow): boolean {
+  return (
+    a.taxableValue === b.taxableValue &&
+    a.cgst === b.cgst &&
+    a.sgst === b.sgst &&
+    a.igst === b.igst &&
+    a.cess === b.cess
+  );
+}
+
+// Same identity dimensions as gstTransactionKey without the period (constant
+// for a single file) — used to merge the portal's per-rate rows before dedupe.
+function aggregateKey(row: NormalizedGstRow, returnType: GstReturnType): string {
+  const own = (row.gstin || "").toUpperCase();
+  const cust = (row.counterpartyGstin || "").toUpperCase();
+  return [returnType, own, cust, row.invoiceNumber, row.invoiceDate ? isoOf(row.invoiceDate) : ""].join("|");
+}
+
+// Sum the money components of two rows sharing the same transaction identity.
+// The portal repeats the full invoice value on every rate row, so the merged
+// invoice value is recomputed from the summed components instead of summed.
+function mergeRows(a: NormalizedGstRow, b: NormalizedGstRow): NormalizedGstRow {
+  const taxableValue = round2(a.taxableValue + b.taxableValue);
+  const cgst = round2(a.cgst + b.cgst);
+  const sgst = round2(a.sgst + b.sgst);
+  const igst = round2(a.igst + b.igst);
+  const cess = round2(a.cess + b.cess);
+  return {
+    gstin: a.gstin,
+    counterpartyGstin: a.counterpartyGstin,
+    counterpartyName: a.counterpartyName ?? b.counterpartyName,
+    invoiceNumber: a.invoiceNumber,
+    invoiceDate: a.invoiceDate,
+    taxableValue,
+    cgst,
+    sgst,
+    igst,
+    cess,
+    invoiceValue: round2(taxableValue + cgst + sgst + igst + cess),
+    placeOfSupply: a.placeOfSupply ?? b.placeOfSupply,
+    hsn: a.hsn ?? b.hsn,
+    documentType: a.documentType ?? b.documentType,
+  };
+}
+
+function parseSpreadsheet(
+  buffer: Buffer,
+  fileName: string,
+  returnType: GstReturnType,
+): ParsedFile {
   let wb: XLSX.WorkBook;
   try {
     wb =
@@ -142,21 +378,40 @@ function parseSpreadsheet(buffer: Buffer, fileName: string, returnType: GstRetur
   } catch {
     throw new GstFileError("File is not a valid Excel/CSV spreadsheet");
   }
-  const rows: ParsedEntry[] = [];
+
+  // The GSTR1 Report is the authoritative B2B source: it carries actual
+  // CGST/SGST/IGST and complete taxable values (the b2b breakdown sheet omits
+  // nil-rated lines). Its rows mix B2B and B2CS/consumer lines, so only rows
+  // with a recipient GSTIN are imported. When the Report is absent or unusable
+  // the b2b,sez,de breakdown sheet is used as a fallback. Both are never parsed
+  // for the same file — the same invoice appears in each and would double count.
+  const reportName = findSheetName(wb, REPORT_SHEET);
+  const b2bName = findSheetName(wb, B2B_SHEET);
+
+  const entries: ParsedEntry[] = [];
+  let reportEmitted = false;
   for (const sheetName of wb.SheetNames) {
-    const ws = wb.Sheets[sheetName];
-    if (!ws) continue;
-    const json: unknown[] = XLSX.utils.sheet_to_json(ws, { defval: null, raw: true });
-    for (const raw of json) {
-      if (raw === null || typeof raw !== "object") {
-        rows.push({ row: blankRow(), columnErrors: ["Row is not an object"] });
-        continue;
+    const key = sheetKey(sheetName);
+    if (key === REPORT_SHEET) {
+      if (reportName) {
+        const before = entries.length;
+        emitSheet(wb, sheetName, returnType, entries, { requireGstin: true });
+        reportEmitted = entries.length > before;
       }
-      const mapped = mapGstRow(raw as Record<string, unknown>, returnType);
-      rows.push({ row: mapped.row, columnErrors: mapped.errors });
+      continue;
     }
+    if (key === B2B_SHEET) {
+      if (b2bName && !reportEmitted) emitSheet(wb, sheetName, returnType, entries);
+      continue;
+    }
+    if (SKIP_SHEETS.has(key)) continue;
+    // Non-portal sheets (generic Excel/CSV uploads) are parsed only when they
+    // expose a recognized transaction header.
+    emitSheet(wb, sheetName, returnType, entries);
   }
-  return rows;
+
+  const { entries: merged, aggregated } = aggregateEntries(entries, returnType);
+  return { entries: merged, aggregated };
 }
 
 function blankRow(): NormalizedGstRow {
@@ -170,6 +425,7 @@ function blankRow(): NormalizedGstRow {
     cgst: 0,
     sgst: 0,
     igst: 0,
+    cess: 0,
     invoiceValue: 0,
     placeOfSupply: null,
     hsn: null,
@@ -298,8 +554,8 @@ export async function validateGstFileService(
   period: string,
   dbCheck = true,
 ): Promise<ImportBatchSummary> {
-  const entries = parseGstFile(buffer, fileName, returnType);
-  const validated = validateBatch(entries, returnType, period);
+  const parsed = parseGstFileDetailed(buffer, fileName, returnType);
+  const validated = validateBatch(parsed.entries, returnType, period);
   let duplicates = validated.duplicates;
   let imported = 0;
 
@@ -314,11 +570,12 @@ export async function validateGstFileService(
     returnType,
     period,
     totalRows: validated.totalRows,
-    valid: entries.length - validated.invalidRows.length,
+    valid: parsed.entries.length - validated.invalidRows.length,
     invalid: validated.invalidRows.length,
     duplicates,
     imported,
     errors: validated.errors,
+    aggregated: parsed.aggregated,
   };
 }
 
@@ -330,8 +587,8 @@ export async function importGstFileService(
   returnType: GstReturnType,
   period: string,
 ): Promise<ImportBatchSummary> {
-  const entries = parseGstFile(buffer, fileName, returnType);
-  const validated = validateBatch(entries, returnType, period);
+  const parsed = parseGstFileDetailed(buffer, fileName, returnType);
+  const validated = validateBatch(parsed.entries, returnType, period);
   const errors = [...validated.errors];
 
   let imported = 0;
@@ -422,6 +679,7 @@ export async function importGstFileService(
     duplicates: validated.duplicates,
     imported,
     errors,
+    aggregated: parsed.aggregated,
   };
 }
 
