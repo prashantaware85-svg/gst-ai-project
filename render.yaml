@@ -7,7 +7,8 @@
 #
 # SECRETS ARE NOT DEFINED HERE. Set these in the Render Dashboard
 # (Environment tab) after creation: DATABASE_URL, JWT_SECRET,
-# OPENAI_API_KEY, CORS_ORIGIN. Everything else has a safe default below.
+# ADMIN_EMAIL, ADMIN_PASSWORD, OPENAI_API_KEY, CORS_ORIGIN.
+# Everything else has a safe default below.
 #
 services:
   - type: web
@@ -44,6 +45,15 @@ services:
         sync: false
       - key: JWT_SECRET
         # Generate: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+        sync: false
+      - key: ADMIN_EMAIL
+        # Email of the production ADMIN user bootstrapped on start (role ADMIN).
+        # Set both ADMIN_EMAIL and ADMIN_PASSWORD, otherwise no admin is created.
+        sync: false
+      - key: ADMIN_PASSWORD
+        # Strong password for the ADMIN user (min 8 chars). Hashed with bcrypt
+        # on startup and never printed. Add/migrate to a fresh Render env
+        # deploy (or change it here and redeploy) to update the admin password.
         sync: false
       - key: CORS_ORIGIN
         # Comma-separated browser origins allowed to call the API, e.g.
