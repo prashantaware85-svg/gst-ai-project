@@ -158,7 +158,7 @@ export interface NormalizedVoucher {
 
 export type VoucherKind = "sales" | "purchases";
 
-// TallyPrime's built-in voucher type names used to filter the Day Book export.
+// TallyPrime's built-in voucher type names used to filter the voucher export.
 const VOUCHER_TYPE_NAME: Record<VoucherKind, string> = {
   sales: "Sales",
   purchases: "Purchase",
@@ -176,10 +176,13 @@ function toTallyDate(iso: string): string {
   return `${d}-${TALLY_MONTHS[Number(m) - 1]}-${y}`;
 }
 
-// Exports the Day Book report filtered to a single voucher type. The built-in
-// $$VchSales / $$VchPurchase collections fail on TallyPrime ("Could not find
-// description"), so a REPORT ISMODIFY filter + Formulae SYSTEM is injected into
-// a TYPE=Data, ID=DayBook export instead.
+// Exports the Voucher Register report filtered to a single voucher type. The
+// built-in $$VchSales / $$VchPurchase collections fail on TallyPrime ("Could not
+// find description") and the Day Book export ignores SVFROMDATE/SVTODATE (it
+// returns the most recent vouchers regardless of the requested period, verified
+// live against TallyPrime). The Voucher Register honours the requested date
+// range, so a REPORT ISMODIFY filter + Formulae SYSTEM is injected into a
+// TYPE=Data, ID=Voucher Register export instead.
 function voucherEnvelope(kind: VoucherKind, fromDate: string, toDate: string): string {
   const vchType = VOUCHER_TYPE_NAME[kind];
   return `<?xml version="1.0" encoding="utf-8"?>
@@ -188,7 +191,7 @@ function voucherEnvelope(kind: VoucherKind, fromDate: string, toDate: string): s
     <VERSION>1</VERSION>
     <TALLYREQUEST>Export</TALLYREQUEST>
     <TYPE>Data</TYPE>
-    <ID>DayBook</ID>
+    <ID>Voucher Register</ID>
   </HEADER>
   <BODY>
     <DESC>
@@ -199,7 +202,7 @@ function voucherEnvelope(kind: VoucherKind, fromDate: string, toDate: string): s
       </STATICVARIABLES>
       <TDL>
         <TDLMESSAGE>
-          <REPORT NAME="Day Book" ISMODIFY="Yes">
+          <REPORT NAME="Voucher Register" ISMODIFY="Yes">
             <LOCAL>Collection : Default : Add : Filter : VchTypeFilter</LOCAL>
             <LOCAL>Collection : Default : Add : Fetch : VoucherTypeName</LOCAL>
           </REPORT>
@@ -236,21 +239,23 @@ export async function fetchVouchers(
   const raw = extractVouchers(parsed);
   const expectedType = VOUCHER_TYPE_NAME[kind];
   // TallyPrime can return vouchers outside the requested SVFROMDATE/SVTODATE
-  // (the modified Day Book ignores the date range on some builds), so the
-  // period is enforced here on the normalised voucher date. raw stays aligned
-  // with vouchers 1:1 so consumers never see mismatched pairs.
+  // on some reports, so the period is enforced here on the normalised voucher
+  // date. Vouchers marked as cancelled are voided entries and are excluded.
+  // raw stays aligned with vouchers 1:1 so consumers never see mismatched pairs.
   const pairs: Array<{ raw: any; v: NormalizedVoucher }> = [];
   for (const r of raw) {
     const v = normalizeVoucher(r);
     if (v.voucherType !== expectedType) continue;
     if (!v.voucherDate || v.voucherDate < fromDate || v.voucherDate > toDate) continue;
+    if (textOf(r.ISCANCELLED) === "Yes") continue;
     pairs.push({ raw: r, v });
   }
   return { raw: pairs.map((p) => p.raw), vouchers: pairs.map((p) => p.v) };
 }
 
-// Day Book exports each voucher directly under DATA > TALLYMESSAGE > VOUCHER
-// (no COLLECTION wrapper). TALLYMESSAGE can repeat; normalise with toArray.
+// Voucher Register / Day Book exports each voucher directly under DATA >
+// TALLYMESSAGE > VOUCHER (no COLLECTION wrapper). TALLYMESSAGE can repeat;
+// normalise with toArray.
 function extractVouchers(parsed: any): any[] {
   const out: any[] = [];
   for (const message of toArray(parsed?.ENVELOPE?.BODY?.DATA?.TALLYMESSAGE)) {
@@ -265,8 +270,8 @@ function toArray<T>(v: T | T[] | undefined): T[] {
   return Array.isArray(v) ? v : [v];
 }
 
-// In the Day Book export each repeated <LEDGERENTRIES.LIST> block IS one ledger
-// entry (party line, CGST/SGST/IGST, Round Off, ...) — there is no
+// In the Voucher Register export each repeated <LEDGERENTRIES.LIST> block IS one
+// ledger entry (party line, CGST/SGST/IGST, Round Off, ...) — there is no
 // ALLLEDGERENTRIES/LEDGERENTRY wrapper. The nested shape is also flattened
 // defensively in case other Tally versions wrap the entries.
 function collectLedgerEntries(raw: any): any[] {
@@ -306,7 +311,7 @@ function numOf(v: any): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-// Day Book exports <DATE>YYYYMMDD</DATE>. The parser yields a plain number
+// Voucher exports use <DATE>YYYYMMDD</DATE>. The parser yields a plain number
 // (20260818) when the tag carries no attributes, so stringify before matching.
 function parseTallyDate(v: any): string | null {
   const t = typeof v === "number" ? String(v) : textOf(v);

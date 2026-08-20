@@ -222,13 +222,13 @@ function expectedFinancialYear(): { from: string; to: string } {
   return month >= 4 ? { from: `${y}-04-01`, to: `${y + 1}-03-31` } : { from: `${y - 1}-04-01`, to: `${y}-03-31` };
 }
 
-test("sales sends a Day Book export filtered to the Sales voucher type", async () => {
+test("sales sends a Voucher Register export filtered to the Sales voucher type", async () => {
   pointAtMockTally();
   mockBody = SALES_XML;
   await fetch(`${base}/api/tally/sales?fromDate=2026-04-01&toDate=2026-08-31`, {
     headers: { Authorization: `Bearer ${token()}` },
   });
-  assert.match(lastTallyBody, /<ID>DayBook<\/ID>/);
+  assert.match(lastTallyBody, /<ID>Voucher Register<\/ID>/);
   assert.match(lastTallyBody, /<SVEXPORTFORMAT>\$\$SysName:XML<\/SVEXPORTFORMAT>/);
   assert.match(lastTallyBody, /<SVFROMDATE TYPE="Date">01-Apr-2026<\/SVFROMDATE>/);
   assert.match(lastTallyBody, /<SVTODATE TYPE="Date">31-Aug-2026<\/SVTODATE>/);
