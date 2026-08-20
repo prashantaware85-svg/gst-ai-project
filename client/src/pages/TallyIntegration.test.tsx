@@ -1,5 +1,5 @@
 import { describe, test, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import TallyIntegration from "./TallyIntegration";
 import { api } from "../api/client";
 import { useAuth } from "../hooks/useAuth";
@@ -169,5 +169,43 @@ describe("TallyIntegration", () => {
     renderPage();
     expect(await screen.findByText("Tally Import Summary")).toBeTruthy();
     expect(await screen.findByText("Total records in database: 2")).toBeTruthy();
+  });
+
+  test("recent imports re-queries with the selected date range", async () => {
+    renderPage();
+    fireEvent.change(screen.getByLabelText("From Date"), { target: { value: "2026-07-01" } });
+    fireEvent.change(screen.getByLabelText("To Date"), { target: { value: "2026-07-31" } });
+    await waitFor(() => {
+      expect(mockedApi.tallyImports).toHaveBeenLastCalledWith(undefined, "2026-07-01", "2026-07-31");
+    });
+  });
+
+  test("recent imports shows the empty-state message when no vouchers match", async () => {
+    mockedApi.tallyImports.mockResolvedValue({ ok: true, count: 0, rows: [] } as any);
+    renderPage();
+    expect(await screen.findByText("No imports found for the selected period.")).toBeTruthy();
+  });
+
+  test("recent imports renders vouchers returned for the range", async () => {
+    mockedApi.tallyImports.mockResolvedValue({
+      ok: true,
+      count: 1,
+      rows: [
+        {
+          id: 9,
+          voucherType: "Sales",
+          voucherNumber: "ACO/26-27/227",
+          voucherDate: "2026-07-06",
+          partyName: "Akshay krishi kendra",
+          invoiceNumber: "ACO/26-27/227",
+          taxableValue: 5904.7,
+          totalAmount: 6200,
+        },
+      ],
+    } as any);
+    renderPage();
+    expect(await screen.findByText("Akshay krishi kendra")).toBeTruthy();
+    expect(screen.getAllByText("ACO/26-27/227").length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText("No imports found for the selected period.")).toBeNull();
   });
 });

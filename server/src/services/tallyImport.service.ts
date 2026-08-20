@@ -236,10 +236,18 @@ export async function getImportSummary(): Promise<ImportSummary> {
   };
 }
 
-// Recent imported records (read-only, for review/debugging in the UI).
-export async function listImports(voucherType?: string, limit = 200) {
-  const where =
-    voucherType === "Sales" || voucherType === "Purchase" ? { voucherType } : {};
+// Recent imported records (read-only, for review/debugging in the UI). When a
+// date range is supplied the rows are restricted to vouchers dated within it, so
+// the UI can show exactly the selected period rather than the global latest.
+export async function listImports(voucherType?: string, fromIso?: string, toIso?: string, limit = 200) {
+  const where: Prisma.TallyImportWhereInput = {};
+  if (voucherType === "Sales" || voucherType === "Purchase") where.voucherType = voucherType;
+  if (fromIso || toIso) {
+    const date: Prisma.DateTimeFilter = {};
+    if (fromIso) date.gte = dateOf(fromIso);
+    if (toIso) date.lte = dateOf(toIso);
+    where.voucherDate = date;
+  }
   const rows = await prisma.tallyImport.findMany({
     where,
     orderBy: { importedAt: "desc" },

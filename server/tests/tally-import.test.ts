@@ -220,6 +220,39 @@ test("imports list returns the stored vouchers as plain numbers", async () => {
   assert.equal(typeof row.items[0].amount, "number");
 });
 
+test("imports list respects the requested date range", async () => {
+  // Vouchers are dated 2026-08-18; a July-only range must return none.
+  const july = await fetch(`${base}/api/tally/imports?type=Sales&fromDate=2026-07-01&toDate=2026-07-31`, {
+    headers: { Authorization: `Bearer ${token()}` },
+  });
+  assert.equal(july.status, 200);
+  const jd = await july.json();
+  assert.equal(jd.ok, true);
+  assert.equal(jd.count, 0);
+  assert.deepEqual(jd.rows, []);
+
+  // An August range that covers the voucher dates returns both records.
+  const aug = await fetch(`${base}/api/tally/imports?type=Sales&fromDate=2026-08-01&toDate=2026-08-31`, {
+    headers: { Authorization: `Bearer ${token()}` },
+  });
+  assert.equal(aug.status, 200);
+  const ad = await aug.json();
+  assert.equal(ad.ok, true);
+  assert.equal(ad.count, 2);
+});
+
+test("imports list validates date format and ordering", async () => {
+  const bad = await fetch(`${base}/api/tally/imports?fromDate=01-07-2026`, {
+    headers: { Authorization: `Bearer ${token()}` },
+  });
+  assert.equal(bad.status, 400);
+
+  const swapped = await fetch(`${base}/api/tally/imports?fromDate=2027-03-31&toDate=2026-04-01`, {
+    headers: { Authorization: `Bearer ${token()}` },
+  });
+  assert.equal(swapped.status, 400);
+});
+
 test("import validates the date range with a 400", async () => {
   const res = await fetch(`${base}/api/tally/import?type=sales&fromDate=2027-03-31&toDate=2026-04-01`, {
     method: "POST",

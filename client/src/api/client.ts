@@ -59,8 +59,8 @@ export const api = {
   tallyImport: (type: "sales" | "purchases", fromDate: string, toDate: string) =>
     http.post(`/tally/import`, null, { params: { type, fromDate, toDate } }).then((r) => r.data),
   tallyImportSummary: () => http.get("/tally/import/summary").then((r) => r.data),
-  tallyImports: (type?: string) =>
-    http.get("/tally/imports", { params: { type } }).then((r) => r.data),
+  tallyImports: (type?: string, fromDate?: string, toDate?: string) =>
+    http.get("/tally/imports", { params: { type, fromDate, toDate } }).then((r) => r.data),
   // GST return file import (Excel / CSV / JSON of GSTR-1 or GSTR-2B).
   gstValidate: (returnType: "GSTR1" | "GSTR2B", period: string, file: File) => {
     const form = new FormData();

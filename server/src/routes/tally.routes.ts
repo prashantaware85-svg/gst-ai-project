@@ -191,11 +191,24 @@ tallyRouter.get("/tally/import/summary", authenticate, async (_req: Request, res
   }
 });
 
-// GET /api/tally/imports?type=Sales|Purchase — recent imported records.
+// GET /api/tally/imports?type=Sales|Purchase&fromDate=...&toDate=...
+// Recent imported records, optionally restricted to vouchers dated within the
+// supplied fromDate/toDate range (so the UI shows only the selected period).
 tallyRouter.get("/tally/imports", authenticate, async (req: Request, res: Response) => {
   try {
     const type = typeof req.query.type === "string" ? req.query.type : undefined;
-    const rows = await listImports(type);
+    const fromDate = typeof req.query.fromDate === "string" && req.query.fromDate ? req.query.fromDate : undefined;
+    const toDate = typeof req.query.toDate === "string" && req.query.toDate ? req.query.toDate : undefined;
+    if (fromDate && !/^\d{4}-\d{2}-\d{2}$/.test(fromDate)) {
+      return res.status(400).json({ error: "BadRequest", message: "fromDate must be in YYYY-MM-DD format" });
+    }
+    if (toDate && !/^\d{4}-\d{2}-\d{2}$/.test(toDate)) {
+      return res.status(400).json({ error: "BadRequest", message: "toDate must be in YYYY-MM-DD format" });
+    }
+    if (fromDate && toDate && fromDate > toDate) {
+      return res.status(400).json({ error: "BadRequest", message: "fromDate must be on or before toDate" });
+    }
+    const rows = await listImports(type, fromDate, toDate);
     return res.json({ ok: true, count: rows.length, rows });
   } catch (e) {
     const message = e instanceof TallyError ? e.message : "Database error while loading imports";

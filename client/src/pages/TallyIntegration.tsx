@@ -128,24 +128,30 @@ export default function TallyIntegration() {
   const [recent, setRecent] = useState<ImportedRow[]>([]);
   const [error, setError] = useState("");
 
-  const refreshSummary = useCallback(async () => {
-    try {
-      const s = await api.tallyImportSummary();
-      if (s?.ok) setSummary(s);
-    } catch {
-      // Keep the last known summary; a fresh DB is not an error.
-    }
-    try {
-      const r = await api.tallyImports();
-      if (r?.ok) setRecent(r.rows as ImportedRow[]);
-    } catch {
-      // Ignore — recent list is auxiliary.
-    }
-  }, []);
+  const refreshSummary = useCallback(
+    async (opts?: { from?: string; to?: string }) => {
+      try {
+        const s = await api.tallyImportSummary();
+        if (s?.ok) setSummary(s);
+      } catch {
+        // Keep the last known summary; a fresh DB is not an error.
+      }
+      try {
+        const r = await api.tallyImports(undefined, opts?.from, opts?.to);
+        if (r?.ok) setRecent(r.rows as ImportedRow[]);
+      } catch {
+        // Ignore — recent list is auxiliary.
+      }
+    },
+    [],
+  );
 
+  // Keep the Recent Imports list in sync with the chosen period so it never
+  // shows vouchers from outside the selected date range. Runs on mount with the
+  // default financial-year range and again whenever the range changes.
   useEffect(() => {
-    void refreshSummary();
-  }, [refreshSummary]);
+    void refreshSummary({ from: fromDate || undefined, to: toDate || undefined });
+  }, [refreshSummary, fromDate, toDate]);
 
   const connect = async () => {
     setBusy("connect");
@@ -226,7 +232,7 @@ export default function TallyIntegration() {
         setStatus("connected");
         setStatusMsg(type === "sales" ? "Sales imported successfully" : "Purchase import completed");
       }
-      await refreshSummary();
+      await refreshSummary({ from: fromDate, to: toDate });
     } catch (e: any) {
       const msg = friendlyError(e);
       if (msg.toLowerCase().includes("date")) setDateError(msg);
@@ -400,9 +406,11 @@ export default function TallyIntegration() {
       </Card>
 
       {/* Recent imports */}
-      {recent.length > 0 && (
-        <Card className="p-4">
-          <h2 className="font-medium mb-3">Recent Imports</h2>
+      <Card className="p-4">
+        <h2 className="font-medium mb-3">Recent Imports</h2>
+        {recent.length === 0 ? (
+          <div className="text-sm text-gray-500">No imports found for the selected period.</div>
+        ) : (
           <Table
             headers={["Voucher", "Type", "Date", "Party", "Invoice", "Taxable", "Total"]}
             rows={recent.map((r) => [
@@ -415,8 +423,8 @@ export default function TallyIntegration() {
               `₹${fmt(r.totalAmount)}`,
             ])}
           />
-        </Card>
-      )}
+        )}
+      </Card>
     </div>
   );
 }
