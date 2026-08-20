@@ -235,10 +235,18 @@ export async function fetchVouchers(
 
   const raw = extractVouchers(parsed);
   const expectedType = VOUCHER_TYPE_NAME[kind];
-  const vouchers = raw
-    .map(normalizeVoucher)
-    .filter((v) => v.voucherType === expectedType);
-  return { raw, vouchers };
+  // TallyPrime can return vouchers outside the requested SVFROMDATE/SVTODATE
+  // (the modified Day Book ignores the date range on some builds), so the
+  // period is enforced here on the normalised voucher date. raw stays aligned
+  // with vouchers 1:1 so consumers never see mismatched pairs.
+  const pairs: Array<{ raw: any; v: NormalizedVoucher }> = [];
+  for (const r of raw) {
+    const v = normalizeVoucher(r);
+    if (v.voucherType !== expectedType) continue;
+    if (!v.voucherDate || v.voucherDate < fromDate || v.voucherDate > toDate) continue;
+    pairs.push({ raw: r, v });
+  }
+  return { raw: pairs.map((p) => p.raw), vouchers: pairs.map((p) => p.v) };
 }
 
 // Day Book exports each voucher directly under DATA > TALLYMESSAGE > VOUCHER
