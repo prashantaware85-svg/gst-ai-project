@@ -88,6 +88,9 @@ export interface ReconResultRow {
   igstDifference: number;
   invoiceValueDifference: number;
   reason: string | null;
+  // B2B = GSTIN or party GSTIN is present in source data.
+  // B2C = neither GSTIN is available in the actual source data.
+  type: "B2B" | "B2C";
 }
 
 export function toTallyForRecon(r: any): TallyForRecon {
@@ -179,6 +182,14 @@ function tallyGstinOf(t: TallyForRecon): string {
 
 function gstGstinOf(g: GstForRecon): string {
   return normalizeGstin(g.counterpartyGstin);
+}
+
+// B2B = GSTIN or party GSTIN is present in source data.
+// B2C = neither GSTIN is available in the actual source data.
+function classifyType(t: TallyForRecon, g: GstForRecon): "B2B" | "B2C" {
+  const tallyHasGstin = t.partyGSTIN && normalizeGstin(t.partyGSTIN) !== "";
+  const gstHasGstin = g.counterpartyGstin && normalizeGstin(g.counterpartyGstin) !== "";
+  return (tallyHasGstin || gstHasGstin) ? "B2B" : "B2C";
 }
 
 // Fuzzy invoice similarity as a confidence score in the 60..79 band.
@@ -306,6 +317,7 @@ function mkRow(
   transactionType: TransactionType,
   t: TallyForRecon | null,
   g: GstForRecon | null,
+  type: "B2B" | "B2C" = "B2C",
 ): ReconResultRow {
   let taxable = 0, cgst = 0, sgst = 0, igst = 0, invValue = 0;
   if (t && g) {
@@ -341,6 +353,7 @@ function mkRow(
     igstDifference: igst,
     invoiceValueDifference: invValue,
     reason: null,
+    type,
   };
 }
 
@@ -376,7 +389,7 @@ export function classifyReconciliation(
 
   for (const t of tally) {
     if (tallyInvalid(t)) {
-      const row = mkRow(period, transactionType, t, null);
+      const row = mkRow(period, transactionType, t, null, "B2C");
       row.status = STATUS.INVALID_DATA;
       row.confidence = 0;
       row.matchLevel = "NONE";
@@ -385,7 +398,7 @@ export function classifyReconciliation(
       continue;
     }
     if (tallyDupes.has(t.id)) {
-      const row = mkRow(period, transactionType, t, null);
+      const row = mkRow(period, transactionType, t, null, "B2C");
       row.status = STATUS.DUPLICATE_IN_TALLY;
       row.confidence = 75;
       row.matchLevel = "DUPLICATE";
@@ -396,7 +409,7 @@ export function classifyReconciliation(
 
     const cand = findCandidate(t, gst, gstKeys, used, tol, dateTolDays);
     if (!cand) {
-      const row = mkRow(period, transactionType, t, null);
+      const row = mkRow(period, transactionType, t, null, "B2C");
       row.status = STATUS.MISSING_IN_GST;
       row.confidence = 70;
       row.matchLevel = "NONE";
@@ -412,7 +425,7 @@ export function classifyReconciliation(
   for (const g of gst) {
     if (used.has(g.id)) continue;
     if (gstInvalid(g)) {
-      const row = mkRow(period, transactionType, null, g);
+      const row = mkRow(period, transactionType, null, g, "B2C");
       row.status = STATUS.INVALID_DATA;
       row.confidence = 0;
       row.matchLevel = "NONE";
@@ -421,7 +434,7 @@ export function classifyReconciliation(
       continue;
     }
     if (gstDupes.has(g.id)) {
-      const row = mkRow(period, transactionType, null, g);
+      const row = mkRow(period, transactionType, null, g, "B2C");
       row.status = STATUS.DUPLICATE_IN_GST;
       row.confidence = 75;
       row.matchLevel = "DUPLICATE";
@@ -429,7 +442,7 @@ export function classifyReconciliation(
       rows.push(row);
       continue;
     }
-    const row = mkRow(period, transactionType, null, g);
+    const row = mkRow(period, transactionType, null, g, "B2C");
     row.status = STATUS.MISSING_IN_TALLY;
     row.confidence = 70;
     row.matchLevel = "NONE";
@@ -452,7 +465,12 @@ function buildResult(
   const gstTax = g.cgst + g.sgst + g.igst;
   const tallyInv = invoiceNoOf(t);
 
-  const row = mkRow(period, transactionType, t, g);
+  // Classify B2B/B2C based on actual GSTIN presence in source data.
+  const tallyHasGstin = t.partyGSTIN && normalizeGstin(t.partyGSTIN) !== "";
+  const gstHasGstin = g.counterpartyGstin && normalizeGstin(g.counterpartyGstin) !== "";
+  const type: "B2B" | "B2C" = (tallyHasGstin || gstHasGstin) ? "B2B" : "B2C";
+
+  const row = mkRow(period, transactionType, t, g, type);
   row.confidence = cand.confidence;
   row.matchLevel = `LEVEL${cand.level}`;
 
@@ -546,6 +564,8 @@ export interface RunSummary {
   duplicateInGst: number;
   possibleMatch: number;
   invalidData: number;
+  b2b: number;
+  b2c: number;
 }
 
 export function summarize(rows: ReconResultRow[]): {
@@ -560,6 +580,8 @@ export function summarize(rows: ReconResultRow[]): {
   duplicateInGst: number;
   possibleMatch: number;
   invalidData: number;
+  b2b: number;
+  b2c: number;
 } {
   const counts = {
     matched: 0,
@@ -573,6 +595,8 @@ export function summarize(rows: ReconResultRow[]): {
     duplicateInGst: 0,
     possibleMatch: 0,
     invalidData: 0,
+    b2b: 0,
+    b2c: 0,
   };
   for (const r of rows) {
     switch (r.status) {
@@ -588,6 +612,8 @@ export function summarize(rows: ReconResultRow[]): {
       case STATUS.POSSIBLE_MATCH: counts.possibleMatch += 1; break;
       case STATUS.INVALID_DATA: counts.invalidData += 1; break;
     }
+    if (r.type === "B2B") counts.b2b += 1;
+    if (r.type === "B2C") counts.b2c += 1;
   }
   return counts;
 }
@@ -718,6 +744,8 @@ export async function getRunSummary(
       duplicateInGst: 0,
       possibleMatch: 0,
       invalidData: 0,
+      b2b: 0,
+      b2c: 0,
     };
   }
   return {
@@ -738,6 +766,8 @@ export async function getRunSummary(
     duplicateInGst: run.duplicateInGst,
     possibleMatch: run.possibleMatch,
     invalidData: run.invalidData,
+    b2b: (run as any).b2b ?? 0,
+    b2c: (run as any).b2c ?? 0,
   };
 }
 

@@ -24,6 +24,8 @@ interface RunSummary {
   duplicateInGst: number;
   possibleMatch: number;
   invalidData: number;
+  b2b: number;
+  b2c: number;
 }
 
 interface ReconResultRow {
@@ -38,6 +40,7 @@ interface ReconResultRow {
   igstDifference: number;
   invoiceValueDifference: number;
   reason: string | null;
+  type: "B2B" | "B2C";
   reviewStatus: string | null;
   reviewedBy: string | null;
   reviewedAt: string | null;
@@ -93,6 +96,7 @@ export default function Reconciliation() {
   const [period, setPeriod] = useState(currentMonth());
   const [txnType, setTxnType] = useState<"SALES" | "PURCHASE">("SALES");
   const [statusFilter, setStatusFilter] = useState("");
+  const [typeFilter, setTypeFilter] = useState("");
   const [page, setPage] = useState(1);
   const pageSize = 50;
 
@@ -204,6 +208,8 @@ export default function Reconciliation() {
     { title: "Missing in Tally", value: summary?.missingInTally ?? 0, accent: "text-orange-600" },
     { title: "Dup Tally / GST", value: (summary?.duplicateInTally ?? 0) + (summary?.duplicateInGst ?? 0) },
     { title: "Invalid", value: summary?.invalidData ?? 0 },
+    { title: "B2B", value: summary?.b2b ?? 0, accent: "text-green-600" },
+    { title: "B2C", value: summary?.b2c ?? 0, accent: "text-fuchsia-600" },
   ];
 
   return (
@@ -282,22 +288,35 @@ export default function Reconciliation() {
       <Card className="p-6">
         <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
           <h2 className="font-medium">Results</h2>
-          <select
-            aria-label="Status Filter"
-            value={statusFilter}
-            onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
-            className="px-3 py-2 border rounded text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-gray-100"
-          >
-            <option value="">All statuses</option>
-            {["MATCHED", "AMOUNT_MISMATCH", "DATE_MISMATCH", "INVOICE_NUMBER_MISMATCH", "GSTIN_MISMATCH", "MISSING_IN_GST", "MISSING_IN_TALLY", "DUPLICATE_IN_TALLY", "DUPLICATE_IN_GST", "POSSIBLE_MATCH", "INVALID_DATA"].map((s) => (
-              <option key={s} value={s}>{s.replace(/_/g, " ")}</option>
-            ))}
-          </select>
+<div className="flex flex-wrap items-center gap-2">
+            <select
+              aria-label="Status Filter"
+              value={statusFilter}
+              onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
+              className="px-3 py-2 border rounded text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-gray-100"
+            >
+              <option value="">All statuses</option>
+              {["MATCHED", "AMOUNT_MISMATCH", "DATE_MISMATCH", "INVOICE_NUMBER_MISMATCH", "GSTIN_MISMATCH", "MISSING_IN_GST", "MISSING_IN_TALLY", "DUPLICATE_IN_TALLY", "DUPLICATE_IN_GST", "POSSIBLE_MATCH", "INVALID_DATA"].map((s) => (
+                <option key={s} value={s}>{s.replace(/_/g, " ")}</option>
+              ))}
+            </select>
+            <select
+              aria-label="Type Filter"
+              value={typeFilter}
+              onChange={(e) => { setTypeFilter(e.target.value); setPage(1); }}
+              className="px-3 py-2 border rounded text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-gray-100"
+            >
+              <option value="">All types</option>
+              <option value="B2B">B2B</option>
+              <option value="B2C">B2C</option>
+            </select>
+          </div>
         </div>
 
         <Table
-          headers={["Status", "Invoice (Tally / GST)", "Dates", "GSTIN", "Taxable Diff", "Value Diff", "Conf", "Review"]}
-          rows={rows.map((r) => [
+          headers={["Type", "Status", "Invoice (Tally / GST)", "Dates", "GSTIN", "Taxable Diff", "Value Diff", "Conf", "Review"]}
+          rows={(typeFilter ? rows.filter((r) => r.type === typeFilter) : rows).map((r) => [
+            <div key={`t-${r.id}`} className="font-medium">{r.type}</div>,
             <StatusBadge key={`s-${r.id}`} status={r.status} />,
             <div key={`i-${r.id}`} className="space-y-0.5">
               <div className="font-medium">{r.tally?.invoiceNumber || "—"}</div>

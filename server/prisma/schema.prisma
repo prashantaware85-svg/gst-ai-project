@@ -267,6 +267,8 @@ model GstReconciliationRun {
   duplicateInGst          Int      @default(0)
   possibleMatch           Int      @default(0)
   invalidData             Int      @default(0)
+  b2b                     Int      @default(0)
+  b2c                     Int      @default(0)
   createdAt               DateTime @default(now())
 
   results GstReconciliationResult[]
@@ -298,6 +300,7 @@ model GstReconciliationResult {
   reviewedBy             String?
   reviewedAt             DateTime?
   reviewNote             String?
+  type                   String?
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt
 
