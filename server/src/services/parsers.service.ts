@@ -4,7 +4,9 @@
 // The GST portal (GSTN) downloads come in a handful of well-known shapes:
 //   * GSTR-2B JSON  -> { data: { b2b: [{ ctin, trdnm, in: [...], ... }] } }
 //                      plus credit/debit note tables (cdnur/cdn) and imports.
-//   * GSTR-1 JSON   -> { b2b: [{ ctin, trdnm, in: [...] }], cdn: [...] , ... }
+//   * GSTR-1 JSON   -> { b2b: [{ ctin, inv: [...] }, ...], cdnr: [...] , ... }
+//                      The invoices of every B2B buyer sit under the `inv`
+//                      array (NOT `in`), and registered notes use `cdnr`.
 //   * GSTR-2B XLSX  -> portal spreadsheet with supplier/invoice/tax columns.
 //
 // Real portal invoices carry one or many line items (`itms[].itm_det`) and the
@@ -28,6 +30,13 @@ export interface ParsedRow {
   igst: number;
   cess: number;
   noteType: NoteType;
+  // Owning (filing) company GSTIN from the return's top-level `gstin`, when the
+  // portal JSON carries one. GSTR-1 files do; spreadsheets do not.
+  ownGstin?: string;
+  // Portal invoice total (`val`). The portal rounds each tax head per line, so
+  // the sum of components can differ by a few paise; the declared total is the
+  // authority for invoice total comparisons.
+  invoiceValue?: number;
 }
 
 function noteTypeFrom(code: string | undefined | null): NoteType {
@@ -105,7 +114,7 @@ function sumPortfolio(entry: any) {
 }
 
 // Push one portal invoice (`inum`/`idt` + `itms`) under a supplier GSTIN+name.
-function pushInvoice(out: ParsedRow[], gstin: string, trdnm: string | undefined, inv: any) {
+function pushInvoice(out: ParsedRow[], gstin: string, trdnm: string | undefined, inv: any, ownGstin?: string) {
   const sums = sumPortfolio(inv);
   // Notes key by the document number `nt_num` (books register uses it), not the
   // original invoice number `inum` that the note references.
@@ -124,6 +133,8 @@ function pushInvoice(out: ParsedRow[], gstin: string, trdnm: string | undefined,
     igst: sums.iamt,
     cess: sums.csamt,
     noteType,
+    ownGstin,
+    invoiceValue: parseNum(inv?.val) || undefined,
   });
 }
 
@@ -154,27 +165,29 @@ export function parseGstr2BJson(buffer: Buffer): ParsedRow[] {
   return out.filter(r => r.gstin && r.invoiceNo);
 }
 
-// Real GSTR-1 JSON: { b2b: [{ctin, trdnm, in:[...]}], cdn: [{ctin, trdnm,
-// nt:[...]}], b2ba: [...], b2cs/b2cl (registered/unregistered consumers) }.
-// We reconcile B2B + credit/debit notes; B2CS/B2CL are typically not part of
-// the sales register being reconciled here.
+// Real GSTR-1 JSON: { gstin, fp, b2b: [{ctin, inv:[...]}], b2cl, b2cs, cdnr:
+// [{ctin, nt:[...]}], cdnur, exp, hsn, doc_issue, ... }. Every B2B buyer's
+// invoices live under `inv` (the GSTR-1 spelling; GSTR-2B uses `in`). We
+// reconcile B2B invoices + credit/debit notes (cdnr/cdnur); B2CS/B2CL, HSN and
+// documents-issued summaries carry no invoice numbers and are not importable.
 export function parseGstr1Json(buffer: Buffer): ParsedRow[] {
   const data = JSON.parse(buffer.toString("utf8"));
   const out: ParsedRow[] = [];
   const root = data?.data ?? data?.gstr1 ?? data ?? {};
+  const ownGstin = normalizeGstin(root?.gstin) || undefined;
 
   const suppliers = root.b2b || root.b2ba || [];
   for (const s of suppliers) {
     const gstin = normalizeGstin(s.ctin || s.gstin || "");
     const trdnm = String(s.trdnm ?? "").trim() || undefined;
-    for (const inv of s.in || []) pushInvoice(out, gstin, trdnm, inv);
+    for (const inv of s.inv || s.in || []) pushInvoice(out, gstin, trdnm, inv, ownGstin);
   }
 
-  const notes = root.cdn || root.cdnur || [];
+  const notes = root.cdnr || root.cdnur || root.cdn || [];
   for (const s of notes) {
     const gstin = normalizeGstin(s.ctin || s.gstin || "");
     const trdnm = String(s.trdnm ?? "").trim() || undefined;
-    for (const nt of s.nt || []) pushInvoice(out, gstin, trdnm, nt);
+    for (const nt of s.nt || []) pushInvoice(out, gstin, trdnm, nt, ownGstin);
   }
 
   return out.filter(r => r.gstin && r.invoiceNo);

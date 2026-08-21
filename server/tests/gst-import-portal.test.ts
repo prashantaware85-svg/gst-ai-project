@@ -10,6 +10,8 @@ import { isoOf } from "../src/services/gstNormalization.service";
 // GSTIN; "b2b,sez,de" is the fallback used when the Report sheet is absent.
 const PORTAL = readFileSync(path.join(__dirname, "fixtures", "gstr1-portal-sanitized.xls"));
 const B2B_ONLY = readFileSync(path.join(__dirname, "fixtures", "gstr1-portal-b2b-only.xls"));
+// Real GST portal GSTR-1 JSON export for period 07/2026 (b2b/b2cs/hsn/doc_issue).
+const REAL_JSON = readFileSync(path.join(__dirname, "fixtures", "gstr1-real-2026.json"));
 
 function rowOf(entries: { row: { invoiceNumber: string } }[], invoiceNumber: string) {
   return entries.find((e) => e.row.invoiceNumber === invoiceNumber);
@@ -70,4 +72,45 @@ test("GSTR1 portal xls: exact duplicate invoices report as duplicates after aggr
 
 test("parseGstFile agrees with parseGstFileDetailed on entry count", () => {
   assert.equal(parseGstFile(PORTAL, "gstr1-portal-sanitized.xls", "GSTR1").length, 4);
+});
+
+test("GSTR1 real portal JSON: extracts all 20 B2B invoices from b2b[].inv", () => {
+  const { entries, aggregated } = parseGstFileDetailed(REAL_JSON, "returns_20082026_R1_27ACGFA8244G1ZC_offline_others_0.json", "GSTR1");
+  assert.equal(aggregated, 0);
+  assert.equal(entries.length, 20); // matches sum of b2b[].inv across the 14 suppliers
+  const invs = entries.map((e) => e.row.invoiceNumber).sort();
+  assert.equal(invs[0], "ACO/26-27/10");
+  assert.ok(invs.includes("ACO/26-27/45"));
+  assert.ok(invs.includes("ACO/26-27/110"));
+  // Own (filing) company GSTIN comes from the JSON's top-level gstin.
+  assert.ok(entries.every((e) => e.row.gstin === "27ACGFA8244G1ZC"));
+  // B2CS / HSN / doc_issue sums add no invoice rows.
+  assert.ok(entries.every((e) => e.row.invoiceNumber.startsWith("ACO/")));
+});
+
+test("GSTR1 real portal JSON: invoice amounts, date, GSTIN and portal total are read", () => {
+  const { entries } = parseGstFileDetailed(REAL_JSON, "gstr1-real-2026.json", "GSTR1");
+  const inv45 = rowOf(entries, "ACO/26-27/45")!;
+  assert.equal(inv45.row.counterpartyGstin, "27AAIFO8845M1ZG");
+  assert.equal(isoOf(inv45.row.invoiceDate!), "2026-07-21");
+  assert.equal(inv45.row.taxableValue, 28793.5);          // 19048 (5%) + 9745.5 (18%)
+  assert.equal(inv45.row.cgst, 1353.3);                  // 476.2 + 877.1
+  assert.equal(inv45.row.sgst, 1353.3);
+  assert.equal(inv45.row.igst, 0);
+  assert.equal(inv45.row.invoiceValue, 31500);           // portal `val` wins over the 0.1-derived sum
+  const inv13 = rowOf(entries, "ACO/26-27/13")!;
+  assert.equal(inv13.row.taxableValue, 118667.4);
+  assert.equal(inv13.row.invoiceValue, 124601);
+  const inv100 = rowOf(entries, "ACO/26-27/100")!;
+  assert.equal(inv100.row.counterpartyGstin, "27BUWPK0351H1ZD");
+  assert.equal(isoOf(inv100.row.invoiceDate!), "2026-07-28");
+});
+
+test("GSTR1 real portal JSON: validation marks all 20 as valid, none invalid", () => {
+  const { entries } = parseGstFileDetailed(REAL_JSON, "gstr1-real-2026.json", "GSTR1");
+  const batch = validateBatch(entries, "GSTR1", "2026-07");
+  assert.equal(batch.totalRows, 20);
+  assert.equal(batch.validRows.length, 20);
+  assert.equal(batch.invalidRows.length, 0);
+  assert.equal(batch.duplicates, 0);
 });

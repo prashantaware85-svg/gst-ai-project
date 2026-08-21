@@ -81,7 +81,7 @@ function portalRowToNormalized(r: any): NormalizedGstRow {
   const igst = Number(r.igst) || 0;
   const cess = Number(r.cess) || 0;
   return {
-    gstin: null,
+    gstin: r.ownGstin ? String(r.ownGstin).toUpperCase() || null : null,
     counterpartyGstin: String(r.gstin ?? "").toUpperCase() || null,
     counterpartyName: r.vendorName || null,
     invoiceNumber: normalizeInvoiceText(r.invoiceNo),
@@ -91,7 +91,7 @@ function portalRowToNormalized(r: any): NormalizedGstRow {
     sgst,
     igst,
     cess: Number(r.cess) || 0,
-    invoiceValue: taxable + cgst + sgst + igst + cess,
+    invoiceValue: r.invoiceValue != null ? Number(r.invoiceValue) : taxable + cgst + sgst + igst + cess,
     placeOfSupply: null,
     hsn: null,
     documentType: r.noteType || null,

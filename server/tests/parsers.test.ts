@@ -63,22 +63,31 @@ test("parseGstr2BJson sums multi-line items, CESS and assigns notes", () => {
   assert.equal(note.cess, 0);
 });
 
-test("parseGstr1Json keys notes by nt_num (not the referenced inum)", () => {
+test("parseGstr1Json reads the real GSTR-1 'inv' array (not 'in') and cdnr notes", () => {
+  // Real GST portal GSTR-1 files place every buyer's invoices under `inv` and
+  // registered credit/debit notes under `cdnr` — not the GSTR-2B `in`/`cdn`.
   const gstr1 = {
+    gstin: "27ACGFA8244G1ZC",
+    fp: "072026",
     b2b: [
-      { ctin: "27ZZZZZ9999Z1Z5", trdnm: "Us", in: [
-        { inum: "SALE-001", dt: "2026-01-04", itms: [{ itm_det: { txval: 120000, camt: 10800, samt: 10800, iamt: 0 } }] },
+      { ctin: "27AAKCT4087D1Z4", cfs: "N", inv: [
+        { val: 124601, itms: [{ itm_det: { txval: 118667.4, camt: 2966.69, samt: 2966.69, iamt: 0, csamt: 0 } }], inv_typ: "R", idt: "09-07-2026", inum: "ACO/26-27/13" },
       ]},
     ],
-    cdn: [
-      { ctin: "27ZZZZZ9999Z1Z5", trdnm: "Us", nt: [
-        { ntty: "C", nt_num: "CN-SALE-001", nt_dt: "2026-05-02", inum: "SALE-001", itms: [{ itm_det: { txval: 5000, camt: 450, samt: 450, iamt: 0 } }] },
+    cdnr: [
+      { ctin: "27AAKCT4087D1Z4", nt: [
+        { ntty: "C", nt_num: "CN-ACO-01", nt_dt: "20-07-2026", inum: "ACO/26-27/13", itms: [{ itm_det: { txval: 5000, camt: 450, samt: 450, iamt: 0 } }] },
       ]},
     ],
   };
   const parsed = parseGstr1Json(Buffer.from(JSON.stringify(gstr1)));
-  assert.ok(parsed.find((r) => r.invoiceNo === "SALE-001"));
-  const note = parsed.find((r) => r.invoiceNo === "CN-SALE-001")!;
+  const inv = parsed.find((r) => r.invoiceNo === "ACO/26-27/13")!;
+  assert.equal(inv.invoiceNo, "ACO/26-27/13");
+  assert.equal(parsed.find((r) => r.invoiceNo === "ACO/26-27/13")!.taxableValue, 118667.4);
+  assert.equal(parsed.find((r) => r.invoiceNo === "ACO/26-27/13")!.invoiceValue, 124601); // portal `val`
+  // The own (filing) company GSTIN from the top level is threaded through.
+  assert.equal(inv.ownGstin, "27ACGFA8244G1ZC");
+  const note = parsed.find((r) => r.invoiceNo === "CN-ACO-01")!;
   assert.equal(note.noteType, "CREDIT_NOTE");
   assert.equal(note.taxableValue, 5000);
 });
