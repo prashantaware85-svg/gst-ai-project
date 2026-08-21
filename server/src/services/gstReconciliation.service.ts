@@ -192,6 +192,14 @@ function classifyType(t: TallyForRecon, g: GstForRecon): "B2B" | "B2C" {
   return (tallyHasGstin || gstHasGstin) ? "B2B" : "B2C";
 }
 
+function typeForTally(t: TallyForRecon): "B2B" | "B2C" {
+  return t.partyGSTIN && normalizeGstin(t.partyGSTIN) !== "" ? "B2B" : "B2C";
+}
+
+function typeForGst(g: GstForRecon): "B2B" | "B2C" {
+  return g.counterpartyGstin && normalizeGstin(g.counterpartyGstin) !== "" ? "B2B" : "B2C";
+}
+
 // Fuzzy invoice similarity as a confidence score in the 60..79 band.
 function fuzzyConfidence(a: string, b: string): number {
   const na = normalizeInvoiceNo(a);
@@ -389,7 +397,7 @@ export function classifyReconciliation(
 
   for (const t of tally) {
     if (tallyInvalid(t)) {
-      const row = mkRow(period, transactionType, t, null, "B2C");
+      const row = mkRow(period, transactionType, t, null, typeForTally(t));
       row.status = STATUS.INVALID_DATA;
       row.confidence = 0;
       row.matchLevel = "NONE";
@@ -398,7 +406,7 @@ export function classifyReconciliation(
       continue;
     }
     if (tallyDupes.has(t.id)) {
-      const row = mkRow(period, transactionType, t, null, "B2C");
+      const row = mkRow(period, transactionType, t, null, typeForTally(t));
       row.status = STATUS.DUPLICATE_IN_TALLY;
       row.confidence = 75;
       row.matchLevel = "DUPLICATE";
@@ -409,7 +417,7 @@ export function classifyReconciliation(
 
     const cand = findCandidate(t, gst, gstKeys, used, tol, dateTolDays);
     if (!cand) {
-      const row = mkRow(period, transactionType, t, null, "B2C");
+      const row = mkRow(period, transactionType, t, null, typeForTally(t));
       row.status = STATUS.MISSING_IN_GST;
       row.confidence = 70;
       row.matchLevel = "NONE";
@@ -425,7 +433,7 @@ export function classifyReconciliation(
   for (const g of gst) {
     if (used.has(g.id)) continue;
     if (gstInvalid(g)) {
-      const row = mkRow(period, transactionType, null, g, "B2C");
+      const row = mkRow(period, transactionType, null, g, typeForGst(g));
       row.status = STATUS.INVALID_DATA;
       row.confidence = 0;
       row.matchLevel = "NONE";
@@ -434,7 +442,7 @@ export function classifyReconciliation(
       continue;
     }
     if (gstDupes.has(g.id)) {
-      const row = mkRow(period, transactionType, null, g, "B2C");
+      const row = mkRow(period, transactionType, null, g, typeForGst(g));
       row.status = STATUS.DUPLICATE_IN_GST;
       row.confidence = 75;
       row.matchLevel = "DUPLICATE";
@@ -442,7 +450,7 @@ export function classifyReconciliation(
       rows.push(row);
       continue;
     }
-    const row = mkRow(period, transactionType, null, g, "B2C");
+    const row = mkRow(period, transactionType, null, g, typeForGst(g));
     row.status = STATUS.MISSING_IN_TALLY;
     row.confidence = 70;
     row.matchLevel = "NONE";
@@ -699,6 +707,7 @@ export async function runGstReconciliation(
         igstDifference: r.igstDifference,
         invoiceValueDifference: r.invoiceValueDifference,
         reason: r.reason,
+        type: r.type,
         reviewStatus: null,
       })),
     });
@@ -785,6 +794,7 @@ export interface JoinedResult {
   igstDifference: number;
   invoiceValueDifference: number;
   reason: string | null;
+  type: "B2B" | "B2C" | null;
   reviewStatus: string | null;
   reviewedBy: string | null;
   reviewedAt: string | null;
@@ -868,6 +878,13 @@ async function joinResults(results: any[]): Promise<JoinedResult[]> {
   return results.map((r) => {
     const t = r.tallyTransactionId ? tallyById.get(r.tallyTransactionId as number) : undefined;
     const g = r.gstTransactionId ? gstById.get(r.gstTransactionId as number) : undefined;
+    // Derive B2B/B2C from stored type or actual GSTIN presence for backward compatibility
+    let derivedType: "B2B" | "B2C" | null = (r.type as "B2B" | "B2C" | null) ?? null;
+    if (!derivedType) {
+      const tallyHasGstin = Boolean(t && (t as any).partyGSTIN && normalizeGstin((t as any).partyGSTIN) !== "");
+      const gstHasGstin = Boolean(g && (g as any).counterpartyGstin && normalizeGstin((g as any).counterpartyGstin) !== "");
+      derivedType = (tallyHasGstin || gstHasGstin) ? "B2B" : "B2C";
+    }
     return {
       id: r.id,
       runId: r.runId,
@@ -880,6 +897,7 @@ async function joinResults(results: any[]): Promise<JoinedResult[]> {
       igstDifference: num(r.igstDifference),
       invoiceValueDifference: num(r.invoiceValueDifference),
       reason: r.reason,
+      type: derivedType,
       reviewStatus: r.reviewStatus,
       reviewedBy: r.reviewedBy,
       reviewedAt: r.reviewedAt ? new Date(r.reviewedAt).toISOString() : null,
